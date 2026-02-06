@@ -1,0 +1,4 @@
+Aegis Sentinel Sample Report
+
+This placeholder file represents the digital report delivered after payment.
+Replace this text file with your official PDF report when ready.
