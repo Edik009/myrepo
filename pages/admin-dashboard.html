@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title data-i18n="page_title_cases">Case Studies | Aegis Sentinel</title>
+    <title>Admin Dashboard | Aegis Sentinel</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
@@ -15,11 +15,19 @@
   <body>
     <main class="section">
       <div class="container">
-        <h1 data-i18n="cases_title">Case studies</h1>
-        <p>Loading case studies experience...</p>
+        <h1>Admin Dashboard</h1>
+        <form class="card form-grid" data-admin-login>
+          <label>
+            <span>Password</span>
+            <input type="password" name="password" required />
+          </label>
+          <button class="btn btn-primary" type="submit">Unlock</button>
+          <p class="form-status" data-admin-error></p>
+        </form>
+        <div data-admin-dashboard></div>
       </div>
     </main>
 
-    <script src="../assets/js/abtest.js"></script>
+    <script src="../assets/js/admin.js"></script>
   </body>
 </html>

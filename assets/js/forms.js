@@ -1,6 +1,8 @@
 const submitForm = async (form) => {
   const status = form.querySelector("[data-form-status]");
   const payload = Object.fromEntries(new FormData(form).entries());
+  const leadScore = typeof calculateScore === "function" ? calculateScore() : 0;
+  payload.leadScore = leadScore;
 
   try {
     const contactResponse = await fetch("/api/contact", {

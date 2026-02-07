@@ -44,6 +44,10 @@ const applyTranslations = (translations, lang) => {
     html.setAttribute("dir", "ltr");
     document.body.classList.remove("rtl");
   }
+
+  if (typeof window.applyGeoTargeting === "function") {
+    window.applyGeoTargeting();
+  }
 };
 
 const setLanguage = async (lang) => {

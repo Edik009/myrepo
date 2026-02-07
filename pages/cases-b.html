@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title data-i18n="page_title_payment">Payments | Aegis Sentinel</title>
+    <title data-i18n="page_title_cases">Case Studies | Aegis Sentinel</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
@@ -50,75 +50,68 @@
     </header>
 
     <main>
-      <section class="hero hero-payment">
+      <section class="hero hero-cases">
         <div class="container">
-          <span class="badge" data-i18n="payment_badge">Secure Checkout</span>
-          <h1 data-i18n="payment_title">Purchase a security report</h1>
-          <p data-i18n="payment_intro">
-            Select a product and complete your payment securely. A download link will be
-            provided immediately after confirmation.
+          <span class="badge" data-i18n="cases_badge">Success Stories</span>
+          <h1 data-i18n="cases_title">Case studies</h1>
+          <p data-i18n="cases_intro">
+            Outcome-focused case studies highlighting measurable business value and resilience.
           </p>
         </div>
       </section>
 
-      <div class="abstract-section payment-visuals">
+      <div class="abstract-section threatmap-section">
         <svg xmlns="http://www.w3.org/2000/svg"
              viewBox="0 0 800 520"
-             class="payment-svg"
+             class="threatmap-svg"
              preserveAspectRatio="xMidYMid slice">
           <rect width="800" height="520" fill="#0A1929"/>
-          <g transform="translate(200, 140)">
-            <circle cx="80" cy="80" r="70" fill="#00D4AA" opacity="0.2"/>
-            <path d="M50 80 L75 105 L120 55" stroke="#00D4AA" stroke-width="12" fill="none" stroke-linecap="round" stroke-linejoin="round">
-              <animate attributeName="stroke-dasharray" values="0,120;120,0" dur="1s" fill="freeze"/>
-            </path>
+          <g fill="none" stroke="#00D4AA" stroke-width="1.5" opacity="0.4">
+            <path d="M100 260 C240 100 560 100 700 260"/>
+            <path d="M100 260 C240 420 560 420 700 260"/>
           </g>
-          <g transform="translate(420, 150)">
-            <rect x="0" y="0" width="200" height="140" rx="24" fill="#4FC3F7" opacity="0.2"/>
-            <path d="M40 60 L100 30 L160 60 L100 90 Z" fill="#00D4AA" opacity="0.8"/>
-            <circle cx="100" cy="70" r="12" fill="#FFFFFF"/>
+          <g fill="#4FC3F7" opacity="0.8">
+            <circle cx="200" cy="180" r="6">
+              <animate attributeName="r" values="4;8;4" dur="2.5s" repeatCount="indefinite"/>
+            </circle>
+            <circle cx="400" cy="260" r="8">
+              <animate attributeName="r" values="6;10;6" dur="3s" repeatCount="indefinite"/>
+            </circle>
+            <circle cx="600" cy="180" r="6">
+              <animate attributeName="r" values="4;8;4" dur="2.2s" repeatCount="indefinite"/>
+            </circle>
+            <circle cx="260" cy="360" r="5"/>
+            <circle cx="540" cy="360" r="5"/>
           </g>
         </svg>
       </div>
 
-      <section class="section light">
-        <div class="container">
-          <form class="card form-grid" data-payment-form>
-            <label>
-              <span data-i18n="payment_product_label">Product</span>
-              <select name="product">
-                <option value="basic" data-i18n="payment_product_basic">Basic Audit</option>
-                <option value="extended" data-i18n="payment_product_extended">Extended Report</option>
-              </select>
-            </label>
-            <label>
-              <span data-i18n="payment_email_label">Email</span>
-              <input
-                type="email"
-                name="email"
-                required
-                data-i18n-placeholder="payment_email_placeholder"
-              />
-            </label>
-            <label>
-              <span data-i18n="payment_card_label">Card details</span>
-              <div id="card-element"></div>
-            </label>
-            <button class="btn btn-primary" type="submit" data-i18n="payment_submit_button">
-              Pay securely
-            </button>
-            <p class="form-status" data-payment-status></p>
-            <div class="notice" data-payment-success style="display: none">
-              <strong data-i18n="payment_success_title">Payment confirmed.</strong>
-              <p data-i18n="payment_success_body">
-                Download your report below. A copy will also be emailed to you.
-              </p>
-              <a href="../assets/images/sample-report.pdf" data-i18n="payment_download_link">
-                Download the report
-              </a>
-            </div>
-          </form>
+      <section class="section">
+        <div class="container card-grid">
+          <div class="card">
+            <img class="case-logo" src="../assets/svg/case-medcore-logo.svg" alt="MedCore Devices logo" />
+            <h3 data-i18n="case1_title">MedCore Devices</h3>
+            <p data-i18n="case1_industry">Industry: Medical Devices</p>
+            <p>Outcome: Protected $2B in high-value IP and safeguarded clinical operations.</p>
+            <p>Value: Preserved revenue continuity and reduced regulatory exposure.</p>
+          </div>
+          <div class="card">
+            <img class="case-logo" src="../assets/svg/case-novapay-logo.svg" alt="NovaPay Holdings logo" />
+            <h3 data-i18n="case2_title">NovaPay Holdings</h3>
+            <p data-i18n="case2_industry">Industry: FinTech</p>
+            <p>Outcome: Secured customer assets and reduced fraud attempts by 72%.</p>
+            <p>Value: Improved trust metrics and customer retention.</p>
+          </div>
+          <div class="card">
+            <img class="case-logo" src="../assets/svg/case-helios-logo.svg" alt="Helios Public Sector logo" />
+            <h3 data-i18n="case3_title">Helios Public Sector Network</h3>
+            <p data-i18n="case3_industry">Industry: Government</p>
+            <p>Outcome: Protected critical assets with a 45% faster containment rate.</p>
+            <p>Value: Strengthened resilience scoring and executive confidence.</p>
+            <a class="btn btn-secondary" href="../pages/payment.html">Proceed to payment</a>
+          </div>
         </div>
+        <span class="visually-hidden" data-ab-payment-track></span>
       </section>
     </main>
 
@@ -135,13 +128,16 @@
       </div>
     </footer>
 
-    <script src="https://js.stripe.com/v3/"></script>
     <script src="../assets/js/i18n.js"></script>
-    <script src="../assets/js/leadscore.js"></script>
     <script>
-      trackPageView("payment");
-      fetch("/api/track-payment", { method: "POST" }).catch(() => {});
+      document.querySelectorAll('a[href$="payment.html"]').forEach((link) => {
+        link.addEventListener("click", () => {
+          const tracker = document.querySelector("[data-ab-payment-track]");
+          if (tracker) {
+            tracker.dataset.clicked = "true";
+          }
+        });
+      });
     </script>
-    <script src="../assets/js/payment.js"></script>
   </body>
 </html>
