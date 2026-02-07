@@ -1,0 +1,94 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" 
+     viewBox="0 0 400 200" 
+     width="400" 
+     height="200" 
+     class="helios-logo"
+     aria-labelledby="helios-logo-title"
+     role="img">
+  
+  <title id="helios-logo-title">Helios Public Sector Logo</title>
+  <desc>Public sector company logo with a sun icon and company name</desc>
+  
+  <defs>
+    <linearGradient id="helios-gradient">
+      <stop offset="0%" stop-color="#00D4AA"/>
+      <stop offset="100%" stop-color="#FFD700"/>
+    </linearGradient>
+    
+    <filter id="helios-glow">
+      <feGaussianBlur stdDeviation="2" result="coloredBlur"/>
+      <feMerge>
+        <feMergeNode in="coloredBlur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+  
+  <!-- Sun icon -->
+  <g transform="translate(60, 50)">
+    <circle cx="30" cy="30" r="20" fill="#FFD700" filter="url(#helios-glow)">
+      <animate attributeName="r" values="18;22;18" dur="2.5s" repeatCount="indefinite"/>
+    </circle>
+    <g stroke="#00D4AA" stroke-width="2" stroke-linecap="round" opacity="0.8">
+      <line x1="30" y1="0" x2="30" y2="8">
+        <animateTransform attributeName="transform" 
+                      type="rotate" 
+                      from="0 30 30" 
+                      to="360 30 30" 
+                      dur="10s" 
+                      repeatCount="indefinite"/>
+      </line>
+      <line x1="30" y1="52" x2="30" y2="60">
+        <animateTransform attributeName="transform" 
+                      type="rotate" 
+                      from="0 30 30" 
+                      to="360 30 30" 
+                      dur="10s" 
+                      repeatCount="indefinite"/>
+      </line>
+      <line x1="0" y1="30" x2="8" y2="30">
+        <animateTransform attributeName="transform" 
+                      type="rotate" 
+                      from="0 30 30" 
+                      to="360 30 30" 
+                      dur="10s" 
+                      repeatCount="indefinite"/>
+      </line>
+      <line x1="52" y1="30" x2="60" y2="30">
+        <animateTransform attributeName="transform" 
+                      type="rotate" 
+                      from="0 30 30" 
+                      to="360 30 30" 
+                      dur="10s" 
+                      repeatCount="indefinite"/>
+      </line>
+    </g>
+  </g>
+  
+  <!-- Text Helios -->
+  <text x="120" y="80" 
+        font-family="Inter, sans-serif" 
+        font-weight="700" 
+        font-size="48" 
+        fill="#0A1929"
+        letter-spacing="2">
+    Helios
+  </text>
+  
+  <!-- Text Public Sector -->
+  <text x="120" y="110" 
+        font-family="Inter, sans-serif" 
+        font-weight="400" 
+        font-size="24" 
+        fill="#B0BEC5"
+        letter-spacing="1">
+    Public Sector
+  </text>
+  
+  <!-- Underline -->
+  <line x1="120" y1="130" x2="350" y2="130" 
+        stroke="#FFD700" 
+        stroke-width="3" 
+        stroke-linecap="round"/>
+</svg>
