@@ -3,8 +3,10 @@ const languageSelector = document.querySelector("[data-language-selector]");
 
 const rtlLanguages = new Set(["ar"]);
 
+const resolveBasePath = () => (window.location.pathname.includes("/pages/") ? "../" : "./");
+
 const loadTranslations = async (lang) => {
-  const response = await fetch(`/assets/locales/${lang}.json`);
+  const response = await fetch(`${resolveBasePath()}assets/locales/${lang}.json`);
   if (!response.ok) {
     throw new Error("Translation file not found");
   }
