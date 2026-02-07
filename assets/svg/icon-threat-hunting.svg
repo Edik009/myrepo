@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" 
+     viewBox="0 0 64 64" 
+     width="64" 
+     height="64" 
+     class="icon-threat-hunting"
+     aria-labelledby="icon-threat-hunting-title"
+     role="img">
+  
+  <title id="icon-threat-hunting-title">Proactive Threat Hunting Icon</title>
+  <desc>A radar icon showing proactive threat hunting with scanning lines and a central detection point</desc>
+  
+  <defs>
+    <linearGradient id="threat-hunting-gradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#00D4AA"/>
+      <stop offset="100%" stop-color="#4FC3F7"/>
+    </linearGradient>
+    
+    <filter id="threat-hunting-glow">
+      <feGaussianBlur stdDeviation="1" result="coloredBlur"/>
+      <feMerge>
+        <feMergeNode in="coloredBlur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+  
+  <!-- Radar -->
+  <path d="M32,5 L60,32 L32,59 L4,32 Z" 
+        fill="url(#threat-hunting-gradient)" 
+        opacity="0.8"
+        filter="url(#threat-hunting-glow)"/>
+  
+  <!-- Scanning lines -->
+  <g class="radar-lines" stroke="#0A1929" stroke-width="2" stroke-linecap="round">
+    <line x1="32" y1="32" x2="32" y2="5">
+      <animateTransform attributeName="transform" 
+                    type="rotate" 
+                    from="0 32 32" 
+                    to="360 32 32" 
+                    dur="4s" 
+                    repeatCount="indefinite"/>
+    </line>
+    <line x1="32" y1="32" x2="48" y2="15" stroke-width="1.5" opacity="0.7">
+      <animateTransform attributeName="transform" 
+                    type="rotate" 
+                    from="0 32 32" 
+                    to="360 32 32" 
+                    dur="4s" 
+                    repeatCount="indefinite"
+                    begin="1s"/>
+    </line>
+    <line x1="32" y1="32" x2="16" y2="15" stroke-width="1.5" opacity="0.7">
+      <animateTransform attributeName="transform" 
+                    type="rotate" 
+                    from="0 32 32" 
+                    to="360 32 32" 
+                    dur="4s" 
+                    repeatCount="indefinite"
+                    begin="2s"/>
+    </line>
+  </g>
+  
+  <!-- Central detection point -->
+  <circle cx="32" cy="32" r="8" fill="#FFFFFF" stroke="#00D4AA" stroke-width="2">
+    <animate attributeName="r" values="6;10;6" dur="2s" repeatCount="indefinite"/>
+    <animate attributeName="opacity" values="0.7;1;0.7" dur="2s" repeatCount="indefinite"/>
+  </circle>
+</svg>

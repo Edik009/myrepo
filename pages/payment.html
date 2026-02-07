@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title data-i18n="page_title_payment">Payments | Aegis Sentinel</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="../assets/css/style.css" />
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="container header-inner">
+        <div class="brand">
+          <img class="brand-logo" src="../assets/images/ui-logo.png" alt="Aegis Sentinel logo" />
+          <strong>Aegis Sentinel</strong>
+          <span data-i18n="brand_tagline">Vigilance Beyond the Code</span>
+        </div>
+        <nav class="nav">
+          <a href="../index.html" data-i18n="nav_home">Home</a>
+          <a href="../pages/about.html" data-i18n="nav_about">About Us</a>
+          <a href="../pages/services.html" data-i18n="nav_services">Services</a>
+          <a href="../pages/solutions.html" data-i18n="nav_solutions">Solutions</a>
+          <a href="../pages/cases.html" data-i18n="nav_cases">Case Studies</a>
+          <a href="../pages/blog.html" data-i18n="nav_blog">Insights</a>
+          <a href="../pages/contact.html" data-i18n="nav_contact">Contact</a>
+          <a href="../pages/portal.html" data-i18n="nav_portal">Client Portal</a>
+          <a href="../pages/payment.html" data-i18n="nav_payment">Payments</a>
+        </nav>
+        <div class="language-select">
+          <span>🌐</span>
+          <select data-language-selector>
+            <option value="en">🇬🇧 English</option>
+            <option value="ru">🇷🇺 Русский</option>
+            <option value="ua">🇺🇦 Українська</option>
+            <option value="de">🇩🇪 Deutsch</option>
+            <option value="fr">🇫🇷 Français</option>
+            <option value="es">🇪🇸 Español</option>
+            <option value="ar">🇦🇪 العربية</option>
+            <option value="zh">🇨🇳 简体中文</option>
+            <option value="ja">🇯🇵 日本語</option>
+            <option value="pt-br">🇧🇷 Português (BR)</option>
+            <option value="ko">🇰🇷 한국어</option>
+          </select>
+        </div>
+      </div>
+    </header>
+
+    <main>
+      <section class="hero hero-payment">
+        <div class="container">
+          <span class="badge" data-i18n="payment_badge">Secure Checkout</span>
+          <h1 data-i18n="payment_title">Purchase a security report</h1>
+          <p data-i18n="payment_intro">
+            Select a product and complete your payment securely. A download link will be
+            provided immediately after confirmation.
+          </p>
+          <p class="notice">Payments are currently in demo mode. No real charges are processed.</p>
+        </div>
+      </section>
+
+      <div class="abstract-section payment-visuals">
+        <svg xmlns="http://www.w3.org/2000/svg"
+             viewBox="0 0 800 520"
+             class="payment-svg"
+             preserveAspectRatio="xMidYMid slice">
+          <rect width="800" height="520" fill="#0A1929"/>
+          <g transform="translate(200, 140)">
+            <circle cx="80" cy="80" r="70" fill="#00D4AA" opacity="0.2"/>
+            <path d="M50 80 L75 105 L120 55" stroke="#00D4AA" stroke-width="12" fill="none" stroke-linecap="round" stroke-linejoin="round">
+              <animate attributeName="stroke-dasharray" values="0,120;120,0" dur="1s" fill="freeze"/>
+            </path>
+          </g>
+          <g transform="translate(420, 150)">
+            <rect x="0" y="0" width="200" height="140" rx="24" fill="#4FC3F7" opacity="0.2"/>
+            <path d="M40 60 L100 30 L160 60 L100 90 Z" fill="#00D4AA" opacity="0.8"/>
+            <circle cx="100" cy="70" r="12" fill="#FFFFFF"/>
+          </g>
+        </svg>
+      </div>
+
+      <section class="section light">
+        <div class="container">
+          <form class="card form-grid" data-payment-form>
+            <label>
+              <span data-i18n="payment_product_label">Product</span>
+              <select name="product">
+                <option value="basic" data-i18n="payment_product_basic">Basic Audit</option>
+                <option value="extended" data-i18n="payment_product_extended">Extended Report</option>
+              </select>
+            </label>
+            <label>
+              <span data-i18n="payment_email_label">Email</span>
+              <input
+                type="email"
+                name="email"
+                required
+                data-i18n-placeholder="payment_email_placeholder"
+              />
+            </label>
+            <button class="btn btn-primary" type="submit" data-i18n="payment_submit_button">
+              Pay securely
+            </button>
+            <p class="form-status" data-payment-status></p>
+            <div class="notice" data-payment-success style="display: none">
+              <strong data-i18n="payment_success_title">Payment confirmed.</strong>
+              <p data-i18n="payment_success_body">
+                Download your report below. A copy will also be emailed to you.
+              </p>
+              <a href="../assets/images/sample-report.pdf" data-i18n="payment_download_link">
+                Download the report
+              </a>
+            </div>
+          </form>
+        </div>
+      </section>
+    </main>
+
+    <footer>
+      <div class="container footer-grid">
+        <div>
+          <strong>Aegis Sentinel Global Cybersecurity Solutions</strong>
+          <p data-i18n="footer_tagline">Vigilance Beyond the Code</p>
+        </div>
+        <div>
+          <p data-i18n="footer_contact">Email: security@aegissentinel.com</p>
+          <p data-i18n="footer_rights">© 2024 Aegis Sentinel. All rights reserved.</p>
+        </div>
+      </div>
+    </footer>
+
+    <script src="../assets/js/i18n.js"></script>
+    <script src="../assets/js/leadscore.js"></script>
+    <script>
+      trackPageView("payment");
+      fetch("/api/track-payment", { method: "POST" }).catch(() => {});
+    </script>
+    <script src="../assets/js/payment.js"></script>
+  </body>
+</html>
