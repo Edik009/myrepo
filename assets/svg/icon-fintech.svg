@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" 
+     viewBox="0 0 64 64" 
+     width="64" 
+     height="64" 
+     class="icon-fintech"
+     aria-labelledby="icon-fintech-title"
+     role="img">
+  
+  <title id="icon-fintech-title">FinTech Solutions Icon</title>
+  <desc>A credit card with chip and numbers representing financial technology solutions</desc>
+  
+  <defs>
+    <linearGradient id="fintech-gradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#00D4AA"/>
+      <stop offset="100%" stop-color="#4FC3F7"/>
+    </linearGradient>
+  </defs>
+  
+  <!-- Card -->
+  <rect x="4" y="18" width="56" height="36" rx="5" fill="url(#fintech-gradient)"/>
+  
+  <!-- Chip -->
+  <rect x="12" y="28" width="14" height="10" rx="2" fill="#0A1929" opacity="0.9"/>
+  <rect x="14" y="30" width="10" height="6" rx="1" fill="#00D4AA"/>
+  
+  <!-- Card stripes -->
+  <rect x="44" y="22" width="8" height="3" rx="1.5" fill="#FFFFFF" opacity="0.8"/>
+  <rect x="44" y="27" width="8" height="3" rx="1.5" fill="#FFFFFF" opacity="0.8"/>
+  <rect x="44" y="32" width="8" height="3" rx="1.5" fill="#FFFFFF" opacity="0.8"/>
+  
+  <!-- Shine -->
+  <rect x="4" y="18" width="56" height="36" rx="5" fill="url(#fintech-gradient)" opacity="0.1">
+    <animate attributeName="opacity" values="0;0.15;0" dur="3s" repeatCount="indefinite"/>
+  </rect>
+</svg>

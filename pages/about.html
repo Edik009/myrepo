@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title data-i18n="page_title_about">About Aegis Sentinel</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="../assets/css/style.css" />
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="container header-inner">
+        <div class="brand">
+          <img class="brand-logo" src="../assets/images/ui-logo.svg" alt="Aegis Sentinel logo" />
+          <span data-i18n="brand_tagline">Vigilance Beyond the Code</span>
+        </div>
+        <nav class="nav">
+          <a href="../index.html" data-i18n="nav_home">Home</a>
+          <a href="../pages/about.html" data-i18n="nav_about">About Us</a>
+          <a href="../pages/services.html" data-i18n="nav_services">Services</a>
+          <a href="../pages/solutions.html" data-i18n="nav_solutions">Solutions</a>
+          <a href="../pages/cases.html" data-i18n="nav_cases">Case Studies</a>
+          <a href="../pages/blog.html" data-i18n="nav_blog">Insights</a>
+          <a href="../pages/contact.html" data-i18n="nav_contact">Contact</a>
+          <a href="../pages/portal.html" data-i18n="nav_portal">Client Portal</a>
+          <a href="../pages/payment.html" data-i18n="nav_payment">Payments</a>
+        </nav>
+        <div class="language-select">
+          <select data-language-selector>
+            <option value="en">English</option>
+            <option value="ru">Русский</option>
+            <option value="ua">Українська</option>
+            <option value="de">Deutsch</option>
+            <option value="fr">Français</option>
+            <option value="es">Español</option>
+            <option value="ar">العربية</option>
+            <option value="zh">简体中文</option>
+            <option value="ja">日本語</option>
+            <option value="pt-br">Português (BR)</option>
+            <option value="ko">한국어</option>
+          </select>
+        </div>
+      </div>
+    </header>
+
+    <main>
+      <section class="hero hero-about">
+        <div class="container">
+          <span class="badge" data-i18n="about_badge">Company Profile</span>
+          <h1 data-i18n="about_title">Aegis Sentinel Global Cybersecurity Solutions</h1>
+          <p data-i18n="about_intro">
+            Founded in 2012 in Zug, Switzerland, Aegis Sentinel delivers global cyber defense for
+            regulated industries seeking strategic security advantage.
+          </p>
+        </div>
+      </section>
+
+      <div class="abstract-section shield-section">
+        <svg xmlns="http://www.w3.org/2000/svg"
+             viewBox="0 0 800 600"
+             class="shield-svg"
+             preserveAspectRatio="xMidYMid slice">
+          <defs>
+            <linearGradient id="shield-gradient">
+              <stop offset="0%" stop-color="#00D4AA" stop-opacity="0.4"/>
+              <stop offset="100%" stop-color="#0A1929" stop-opacity="0.9"/>
+            </linearGradient>
+            <filter id="shield-glow">
+              <feGaussianBlur stdDeviation="3" result="coloredBlur"/>
+              <feMerge>
+                <feMergeNode in="coloredBlur"/>
+                <feMergeNode in="SourceGraphic"/>
+              </feMerge>
+            </filter>
+          </defs>
+          <rect width="800" height="600" fill="#0A1929"/>
+          <g transform="translate(400, 300)">
+            <path d="M0,-100 L80,-40 V80 C80,160 0,200 0,200 C0,200 -80,160 -80,80 V-40 Z"
+                  fill="url(#shield-gradient)"
+                  stroke="#00D4AA"
+                  stroke-width="2"
+                  filter="url(#shield-glow)">
+              <animate attributeName="stroke-opacity" values="0.5;1;0.5" dur="3s" repeatCount="indefinite"/>
+            </path>
+            <g class="protected-data" opacity="0.6">
+              <rect x="-60" y="-40" width="120" height="20" rx="5" fill="#00D4AA"/>
+              <rect x="-60" y="-10" width="100" height="20" rx="5" fill="#00D4AA"/>
+              <rect x="-60" y="20" width="110" height="20" rx="5" fill="#00D4AA"/>
+              <rect x="-60" y="50" width="90" height="20" rx="5" fill="#00D4AA"/>
+            </g>
+          </g>
+          <circle cx="400" cy="300" r="220" fill="none" stroke="#00D4AA" stroke-width="1" opacity="0.3">
+            <animate attributeName="r" values="200;240;200" dur="4s" repeatCount="indefinite"/>
+            <animate attributeName="opacity" values="0.2;0.5;0.2" dur="4s" repeatCount="indefinite"/>
+          </circle>
+        </svg>
+      </div>
+
+      <section class="section">
+        <div class="container card-grid">
+          <div class="card">
+            <h3 data-i18n="about_history_title">Our history</h3>
+            <p data-i18n="about_history_body">
+              From a boutique threat intelligence team to a 280+ person global operation, we
+              have evolved alongside the modern threat economy while remaining privately held
+              and mission-driven.
+            </p>
+          </div>
+          <div class="card">
+            <h3 data-i18n="about_mission_title">Mission</h3>
+            <p data-i18n="about_mission_body">
+              We anticipate the evolution of cyber threats, delivering not just protection but
+              a strategic advantage for every client.
+            </p>
+          </div>
+          <div class="card">
+            <h3 data-i18n="about_stats_title">Global reach</h3>
+            <p data-i18n="about_stats_body">
+              280+ experts, 40% former ethical hackers and intelligence analysts, supporting
+              five regional offices and a 24/7 security operations center.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <section class="section light">
+        <div class="container">
+          <h2 data-i18n="about_team_title">Leadership</h2>
+          <div class="card-grid">
+          <div class="card">
+            <img
+              class="profile-photo"
+              src="../assets/images/team-ceo-arthur.png"
+              alt="Portrait of Dr. Arthur Foster, founder and CEO"
+            />
+            <h3 data-i18n="about_team_ceo_name">Dr. Arthur Foster</h3>
+            <p data-i18n="about_team_ceo_role">Founder & CEO</p>
+            <p data-i18n="about_team_ceo_bio">
+              Former head of cyber intelligence operations at the NSA, guiding strategy and
+              executive readiness programs.
+            </p>
+          </div>
+          <div class="card">
+            <img
+              class="profile-photo"
+              src="../assets/images/team-cto-elena.png"
+              alt="Portrait of Elena Voss, chief technology officer"
+            />
+            <h3 data-i18n="about_team_cto_name">Elena Voss</h3>
+            <p data-i18n="about_team_cto_role">Chief Technology Officer</p>
+            <p data-i18n="about_team_cto_bio">
+              Cryptography specialist with prior research leadership at CERN, overseeing
+              secure platform engineering.
+            </p>
+          </div>
+          <div class="card">
+            <img
+              class="profile-photo"
+              src="../assets/images/team-rd-kenji.png"
+              alt="Portrait of Kenji Tanaka, head of research and development"
+            />
+            <h3 data-i18n="about_team_rd_name">Kenji Tanaka</h3>
+            <p data-i18n="about_team_rd_role">Head of R&D</p>
+            <p data-i18n="about_team_rd_bio">
+              Leads AI-driven threat detection initiatives across cloud, OT, and critical
+              infrastructure environments.
+              </p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="section">
+        <div class="container">
+          <h2>Teams in action</h2>
+          <p>Snapshots from collaborative planning, daily operations, and the global SOC.</p>
+          <div class="card-grid">
+            <div class="card">
+              <img
+                class="team-photo"
+                src="../assets/images/team-group-office.png"
+                alt="Aegis Sentinel team collaborating in the office"
+              />
+              <h3>Cross-functional delivery</h3>
+              <p>Multi-disciplinary squads align strategy, engineering, and client outcomes.</p>
+            </div>
+            <div class="card">
+              <img
+                class="team-photo"
+                src="../assets/images/team-meeting.png"
+                alt="Security leadership strategy meeting"
+              />
+              <h3>Executive alignment</h3>
+              <p>Weekly alignment sessions keep response plans and risk priorities in sync.</p>
+            </div>
+            <div class="card">
+              <img
+                class="team-photo"
+                src="../assets/images/team-security-center.png"
+                alt="Security operations center monitoring threats"
+              />
+              <h3>24/7 monitoring</h3>
+              <p>Our SOC teams coordinate response playbooks and continuous detection.</p>
+            </div>
+            <div class="card">
+              <img
+                class="team-photo"
+                src="../assets/images/team-pentesting.png"
+                alt="Penetration testing team validating defenses"
+              />
+              <h3>Offensive validation</h3>
+              <p>Red-team operators pressure-test defenses with realistic attack simulations.</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="section">
+        <div class="container">
+          <h2 data-i18n="about_offices_title">Offices</h2>
+          <p data-i18n="about_offices_body">
+            Headquarters in Zug with regional operations in London, Dubai, Singapore, Berlin,
+            and Boston to support global clients.
+          </p>
+          <div class="card-grid">
+            <div class="card">
+              <img
+                class="office-photo"
+                src="../assets/images/office-zug-headquarters.png"
+                alt="Aegis Sentinel headquarters in Zug, Switzerland"
+              />
+              <h3>Zug, Switzerland</h3>
+            </div>
+            <div class="card">
+              <img
+                class="office-photo"
+                src="../assets/images/office-london-exterior.png"
+                alt="Aegis Sentinel London office exterior"
+              />
+              <h3>London, UK</h3>
+            </div>
+            <div class="card">
+              <img
+                class="office-photo"
+                src="../assets/images/office-dubai-interior.png"
+                alt="Aegis Sentinel Dubai office interior"
+              />
+              <h3>Dubai, UAE</h3>
+            </div>
+            <div class="card">
+              <img
+                class="office-photo"
+                src="../assets/images/office-singapore-view.png"
+                alt="Aegis Sentinel Singapore office view"
+              />
+              <h3>Singapore</h3>
+            </div>
+            <div class="card">
+              <img
+                class="office-photo"
+                src="../assets/images/office-berlin-team.png"
+                alt="Aegis Sentinel Berlin team workspace"
+              />
+              <h3>Berlin, Germany</h3>
+            </div>
+            <div class="card">
+              <img
+                class="office-photo"
+                src="../assets/images/office-boston-lobby.png"
+                alt="Aegis Sentinel Boston lobby"
+              />
+              <h3>Boston, USA</h3>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="section light">
+        <div class="container">
+          <h2 data-i18n="about_cert_title">Compliance & partnerships</h2>
+          <p data-i18n="about_cert_body">
+            ISO 27001, 27701, and 22301 aligned. Proud partner of the Microsoft Intelligent
+            Security Association program.
+          </p>
+        </div>
+      </section>
+    </main>
+
+    <footer>
+      <div class="container footer-grid">
+        <div>
+          <strong>Aegis Sentinel Global Cybersecurity Solutions</strong>
+          <p data-i18n="footer_tagline">Vigilance Beyond the Code</p>
+        </div>
+        <div>
+          <p data-i18n="footer_contact">Email: security@aegissentinel.com</p>
+          <p data-i18n="footer_rights">© 2026 Aegis Sentinel. All rights reserved.</p>
+        </div>
+      </div>
+    </footer>
+
+    <script src="../assets/js/i18n.js"></script>
+  </body>
+</html>
