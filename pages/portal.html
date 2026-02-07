@@ -135,6 +135,76 @@
                 </a>
               </div>
             </section>
+            <section class="section">
+              <h3>Client data analysis</h3>
+              <p>
+                Upload scan data you explicitly choose to share. We only process data after you
+                grant consent below.
+              </p>
+              <form class="card form-grid" data-client-data-form>
+                <label>
+                  <span>Organization name</span>
+                  <input name="client_name" required />
+                </label>
+                <label>
+                  <span>Email for report delivery</span>
+                  <input type="email" name="email" required />
+                </label>
+                <label>
+                  <span>Upload JSON scan data</span>
+                  <input type="file" name="data_file" accept=".json" required />
+                </label>
+                <label>
+                  <input type="checkbox" name="consent" required />
+                  I consent to processing this dataset for analysis and recommendations.
+                </label>
+                <button class="btn btn-secondary" type="submit">Analyze data</button>
+                <p class="form-status" data-client-data-status></p>
+                <p class="notice" data-client-data-output></p>
+                <button class="btn btn-primary" type="button" data-brief-generate>
+                  Create educational brief
+                </button>
+                <p class="form-status" data-brief-status></p>
+              </form>
+            </section>
+            <section class="section light">
+              <div class="container">
+                <h3>Optional metrics agent</h3>
+                <p>
+                  Enable opt-in metrics collection to receive deeper performance and availability
+                  insights. You control every metric below.
+                </p>
+                <form class="card form-grid" data-metrics-consent-form>
+                  <label>
+                    <span>Email for updates</span>
+                    <input type="email" name="metrics_email" required />
+                  </label>
+                  <label>
+                    <input type="checkbox" name="metrics" value="availability" />
+                    Availability status checks
+                  </label>
+                  <label>
+                    <input type="checkbox" name="metrics" value="latency" />
+                    Response-time monitoring
+                  </label>
+                  <label>
+                    <input type="checkbox" name="metrics" value="certificate" />
+                    Certificate expiry tracking
+                  </label>
+                  <label>
+                    <input type="checkbox" name="metrics_consent" required />
+                    I consent to collecting only the selected metrics.
+                  </label>
+                  <button class="btn btn-secondary" type="submit">Save preferences</button>
+                  <p class="form-status" data-metrics-status></p>
+                </form>
+              </div>
+            </section>
+            <section class="section">
+              <h3>Demo lab</h3>
+              <p>Access the isolated lab environment to explore monitoring simulations.</p>
+              <a class="btn btn-secondary" href="../demo-lab.html">Open demo lab</a>
+            </section>
             <div class="button-group">
               <a class="btn btn-primary" href="../pages/contact.html" data-i18n="portal_ticket_button">
                 Open support ticket
@@ -163,5 +233,7 @@
 
     <script src="../assets/js/i18n.js"></script>
     <script src="../assets/js/portal.js"></script>
+    <script src="../assets/js/client_data_analyzer.js"></script>
+    <script src="../assets/js/optin_metrics_collector.js"></script>
   </body>
 </html>

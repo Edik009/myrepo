@@ -25,10 +25,58 @@
           <button class="btn btn-primary" type="submit">Unlock</button>
           <p class="form-status" data-admin-error></p>
         </form>
-        <div data-admin-dashboard></div>
+        <div data-admin-dashboard>
+          <section class="section">
+            <h2>Command Center</h2>
+            <div data-internal-analytics></div>
+          </section>
+
+          <section class="section">
+            <h2>Profile Analysis</h2>
+            <p>Launch analysis only for client-provided datasets with explicit consent.</p>
+            <button class="btn btn-secondary" type="button" data-admin-refresh>
+              Refresh analysis results
+            </button>
+            <div class="card-grid" data-analysis-results></div>
+          </section>
+
+          <section class="section light">
+            <div class="container">
+              <h2>Demonstrations</h2>
+              <p>Sandbox demos are run exclusively in the isolated demo lab.</p>
+              <div class="card-grid" data-demo-results></div>
+            </div>
+          </section>
+
+          <section class="section">
+            <h2>Client Agents</h2>
+            <p>Status of opt-in metrics agents and current data permissions.</p>
+            <div class="card-grid" data-agent-results></div>
+          </section>
+
+          <section class="section light">
+            <div class="container">
+              <h2>Consent Management</h2>
+              <p>Track consent history and ensure opt-out requests are honored.</p>
+              <div class="card-grid" data-consent-results></div>
+            </div>
+          </section>
+
+          <section class="section">
+            <h2>Communications</h2>
+            <p>Automated messages only send to opted-in contacts.</p>
+            <button class="btn btn-secondary" type="button" data-comm-sync>
+              Sync communication workflows
+            </button>
+            <p class="form-status" data-comm-status></p>
+            <div class="card-grid" data-comm-results></div>
+          </section>
+        </div>
       </div>
     </main>
 
     <script src="../assets/js/admin.js"></script>
+    <script src="../assets/js/internal_analytics.js"></script>
+    <script src="../assets/js/communication_manager.js"></script>
   </body>
 </html>

@@ -9,6 +9,13 @@ const port = process.env.PORT || 3000;
 
 const queuePath = path.join(__dirname, "queue.json");
 const statsPath = path.join(__dirname, "stats.json");
+const dataDir = path.join(__dirname, "data");
+const analysisPath = path.join(dataDir, "analysis_reports.json");
+const briefsPath = path.join(dataDir, "educational_briefs.json");
+const consentsPath = path.join(dataDir, "consents.json");
+const demosPath = path.join(dataDir, "demo_sessions.json");
+const agentsPath = path.join(dataDir, "metrics_agents.json");
+const commsPath = path.join(dataDir, "communications_log.json");
 
 app.use(cors());
 app.use(express.json());
@@ -28,6 +35,20 @@ const readJsonFile = (filePath, fallback) => {
 
 const writeJsonFile = (filePath, data) => {
   fs.writeFileSync(filePath, JSON.stringify(data, null, 2));
+};
+
+const ensureDataDir = () => {
+  if (!fs.existsSync(dataDir)) {
+    fs.mkdirSync(dataDir, { recursive: true });
+  }
+};
+
+const appendJsonEntry = (filePath, entry) => {
+  ensureDataDir();
+  const items = readJsonFile(filePath, []);
+  items.push(entry);
+  writeJsonFile(filePath, items);
+  return items;
 };
 
 const updateStats = (updater) => {
@@ -141,6 +162,155 @@ app.get("/api/process-queue", async (req, res) => {
 
 app.post("/api/create-payment-intent", (req, res) => {
   return res.status(501).json({ message: "Payments are disabled in demo mode." });
+});
+
+app.post("/api/client-data-analysis", (req, res) => {
+  const { clientName, email, consent, payload, summary } = req.body;
+  if (!consent || !clientName || !email || !payload) {
+    return res.status(400).json({ message: "Consent and data are required." });
+  }
+
+  const report = {
+    id: `report_${Date.now()}`,
+    clientName,
+    email,
+    summary: summary || "Client provided structured data for analysis.",
+    createdAt: new Date().toISOString()
+  };
+
+  appendJsonEntry(analysisPath, report);
+  return res.json({
+    message: "Analysis complete. Report generated.",
+    summary: report.summary,
+    reportId: report.id
+  });
+});
+
+app.post("/api/generate-educational-brief", (req, res) => {
+  const { reportId, email, consent } = req.body;
+  if (!consent || !reportId || !email) {
+    return res.status(400).json({ message: "Consent, report ID, and email are required." });
+  }
+
+  const brief = {
+    id: `brief_${Date.now()}`,
+    reportId,
+    email,
+    createdAt: new Date().toISOString(),
+    status: "generated"
+  };
+
+  appendJsonEntry(briefsPath, brief);
+  appendJsonEntry(commsPath, {
+    id: `comm_${Date.now()}`,
+    type: "educational_brief",
+    email,
+    reportId,
+    status: "ready",
+    createdAt: new Date().toISOString()
+  });
+
+  return res.json({ message: "Educational brief generated and queued for delivery." });
+});
+
+app.post("/api/metrics-consent", (req, res) => {
+  const { email, metrics, consent } = req.body;
+  if (!consent || !email) {
+    return res.status(400).json({ message: "Consent and email are required." });
+  }
+
+  appendJsonEntry(consentsPath, {
+    id: `consent_${Date.now()}`,
+    email,
+    metrics: metrics || [],
+    createdAt: new Date().toISOString()
+  });
+  appendJsonEntry(agentsPath, {
+    id: `agent_${Date.now()}`,
+    email,
+    metrics: metrics || [],
+    status: "opted-in",
+    updatedAt: new Date().toISOString()
+  });
+
+  return res.json({ message: "Metrics consent stored." });
+});
+
+app.get("/api/admin/analysis-reports", (req, res) => {
+  const reports = readJsonFile(analysisPath, []);
+  res.json({
+    items: reports.map((report) => ({
+      title: report.clientName,
+      body: report.summary,
+      meta: report.createdAt
+    }))
+  });
+});
+
+app.get("/api/admin/demo-sessions", (req, res) => {
+  const demos = readJsonFile(demosPath, []);
+  res.json({
+    items: demos.map((demo) => ({
+      title: demo.name || "Demo session",
+      body: demo.status || "scheduled",
+      meta: demo.createdAt
+    }))
+  });
+});
+
+app.get("/api/admin/metrics-agents", (req, res) => {
+  const agents = readJsonFile(agentsPath, []);
+  res.json({
+    items: agents.map((agent) => ({
+      title: agent.email,
+      body: `Metrics: ${(agent.metrics || []).join(", ") || "none"}`,
+      meta: agent.status
+    }))
+  });
+});
+
+app.get("/api/admin/consents", (req, res) => {
+  const consents = readJsonFile(consentsPath, []);
+  res.json({
+    items: consents.map((consent) => ({
+      title: consent.email,
+      body: `Consented metrics: ${(consent.metrics || []).join(", ") || "none"}`,
+      meta: consent.createdAt
+    }))
+  });
+});
+
+app.get("/api/admin/communications", (req, res) => {
+  const comms = readJsonFile(commsPath, []);
+  res.json({
+    items: comms.map((comm) => ({
+      title: comm.type,
+      body: `Email: ${comm.email}`,
+      meta: comm.status
+    }))
+  });
+});
+
+app.post("/api/admin/communications/sync", (req, res) => {
+  appendJsonEntry(commsPath, {
+    id: `comm_${Date.now()}`,
+    type: "sync",
+    email: "system",
+    status: "synced",
+    createdAt: new Date().toISOString()
+  });
+  res.json({ message: "Communication workflows synced." });
+});
+
+app.get("/api/admin/analytics", (req, res) => {
+  const reports = readJsonFile(analysisPath, []);
+  const consents = readJsonFile(consentsPath, []);
+  const demos = readJsonFile(demosPath, []);
+  res.json({
+    reportsGenerated: reports.length,
+    activeConsents: consents.length,
+    demoSessions: demos.length
+  });
 });
 
 app.listen(port, () => {
