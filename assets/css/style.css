@@ -31,6 +31,35 @@ img {
   display: block;
 }
 
+.brand-logo {
+  width: 140px;
+  max-width: 100%;
+  height: auto;
+}
+
+.profile-photo,
+.office-photo,
+.case-photo,
+.team-photo,
+.service-photo {
+  border-radius: 16px;
+  width: 100%;
+  height: auto;
+  object-fit: cover;
+}
+
+.profile-photo {
+  aspect-ratio: 1 / 1;
+  margin-bottom: 1rem;
+}
+
+.office-photo,
+.case-photo,
+.team-photo,
+.service-photo {
+  margin-bottom: 0.75rem;
+}
+
 .container {
   width: min(1100px, 92vw);
   margin: 0 auto;
