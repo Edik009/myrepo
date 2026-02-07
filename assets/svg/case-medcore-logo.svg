@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" 
+     viewBox="0 0 400 200" 
+     width="400" 
+     height="200" 
+     class="medcore-logo"
+     aria-labelledby="medcore-logo-title"
+     role="img">
+  
+  <title id="medcore-logo-title">MedCore Devices Logo</title>
+  <desc>Medical technology company logo with a medical cross and company name</desc>
+  
+  <defs>
+    <linearGradient id="medcore-gradient">
+      <stop offset="0%" stop-color="#00D4AA"/>
+      <stop offset="100%" stop-color="#4CAF50"/>
+    </linearGradient>
+  </defs>
+  
+  <!-- Medical cross -->
+  <g transform="translate(50, 50)">
+    <rect x="20" y="0" width="60" height="20" rx="5" fill="url(#medcore-gradient)">
+      <animate attributeName="opacity" values="0.8;1;0.8" dur="3s" repeatCount="indefinite"/>
+    </rect>
+    <rect x="40" y="-20" width="20" height="60" rx="5" fill="url(#medcore-gradient)">
+      <animate attributeName="opacity" values="0.8;1;0.8" dur="3s" repeatCount="indefinite" begin="0.5s"/>
+    </rect>
+  </g>
+  
+  <!-- Text MedCore -->
+  <text x="150" y="80" 
+        font-family="Inter, sans-serif" 
+        font-weight="700" 
+        font-size="48" 
+        fill="#0A1929"
+        letter-spacing="2">
+    MedCore
+  </text>
+  
+  <!-- Text Devices -->
+  <text x="150" y="110" 
+        font-family="Inter, sans-serif" 
+        font-weight="400" 
+        font-size="24" 
+        fill="#B0BEC5"
+        letter-spacing="1">
+    Devices
+  </text>
+  
+  <!-- Underline -->
+  <line x1="150" y1="130" x2="350" y2="130" 
+        stroke="#00D4AA" 
+        stroke-width="3" 
+        stroke-linecap="round"
+        stroke-dasharray="5,5"
+        opacity="0.8">
+    <animate attributeName="stroke-dashoffset" values="0;-20" dur="2s" repeatCount="indefinite"/>
+  </line>
+</svg>
