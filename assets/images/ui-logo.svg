@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 520 160" width="520" height="160" role="img" aria-labelledby="aegis-logo-title">
+  <title id="aegis-logo-title">Aegis Sentinel Logo</title>
+  <defs>
+    <linearGradient id="logo-gradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#00D4AA" />
+      <stop offset="100%" stop-color="#4FC3F7" />
+    </linearGradient>
+    <linearGradient id="shield-gradient" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#1B4F7A" />
+      <stop offset="100%" stop-color="#0A1929" />
+    </linearGradient>
+  </defs>
+  <g transform="translate(20,20)">
+    <path d="M60 10 L110 30 V80 C110 115 60 130 60 130 C60 130 10 115 10 80 V30 Z" fill="url(#shield-gradient)" stroke="url(#logo-gradient)" stroke-width="4" />
+    <circle cx="60" cy="55" r="6" fill="#FFFFFF" />
+    <circle cx="35" cy="45" r="4" fill="#FFFFFF" />
+    <circle cx="85" cy="40" r="4" fill="#FFFFFF" />
+    <circle cx="75" cy="85" r="4" fill="#FFFFFF" />
+    <line x1="60" y1="55" x2="35" y2="45" stroke="#FFFFFF" stroke-width="2" />
+    <line x1="60" y1="55" x2="85" y2="40" stroke="#FFFFFF" stroke-width="2" />
+    <line x1="60" y1="55" x2="75" y2="85" stroke="#FFFFFF" stroke-width="2" />
+  </g>
+  <g transform="translate(160,48)" fill="url(#logo-gradient)">
+    <text x="0" y="38" font-family="'Inter', 'Segoe UI', sans-serif" font-size="48" font-weight="700" letter-spacing="4">AEGIS</text>
+    <text x="2" y="78" font-family="'Inter', 'Segoe UI', sans-serif" font-size="24" font-weight="600" letter-spacing="6">SENTINEL</text>
+  </g>
+</svg>
