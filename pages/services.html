@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title data-i18n="page_title_services">Services | Aegis Sentinel</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="../assets/css/style.css" />
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="container header-inner">
+        <div class="brand">
+          <img class="brand-logo" src="../assets/images/ui-logo.png" alt="Aegis Sentinel logo" />
+          <strong>Aegis Sentinel</strong>
+          <span data-i18n="brand_tagline">Vigilance Beyond the Code</span>
+        </div>
+        <nav class="nav">
+          <a href="../index.html" data-i18n="nav_home">Home</a>
+          <a href="../pages/about.html" data-i18n="nav_about">About Us</a>
+          <a href="../pages/services.html" data-i18n="nav_services">Services</a>
+          <a href="../pages/solutions.html" data-i18n="nav_solutions">Solutions</a>
+          <a href="../pages/cases.html" data-i18n="nav_cases">Case Studies</a>
+          <a href="../pages/blog.html" data-i18n="nav_blog">Insights</a>
+          <a href="../pages/contact.html" data-i18n="nav_contact">Contact</a>
+          <a href="../pages/portal.html" data-i18n="nav_portal">Client Portal</a>
+          <a href="../pages/payment.html" data-i18n="nav_payment">Payments</a>
+        </nav>
+        <div class="language-select">
+          <span>🌐</span>
+          <select data-language-selector>
+            <option value="en">🇬🇧 English</option>
+            <option value="ru">🇷🇺 Русский</option>
+            <option value="ua">🇺🇦 Українська</option>
+            <option value="de">🇩🇪 Deutsch</option>
+            <option value="fr">🇫🇷 Français</option>
+            <option value="es">🇪🇸 Español</option>
+            <option value="ar">🇦🇪 العربية</option>
+            <option value="zh">🇨🇳 简体中文</option>
+            <option value="ja">🇯🇵 日本語</option>
+            <option value="pt-br">🇧🇷 Português (BR)</option>
+            <option value="ko">🇰🇷 한국어</option>
+          </select>
+        </div>
+      </div>
+    </header>
+
+    <main>
+      <section class="hero hero-services">
+        <div class="container">
+          <span class="badge" data-i18n="services_badge">Service Portfolio</span>
+          <h1 data-i18n="services_title">Cybersecurity services engineered for resilience</h1>
+          <p data-i18n="services_intro">
+            Aegis Sentinel delivers proactive and responsive security programs with measurable
+            outcomes across complex regulatory environments.
+          </p>
+        </div>
+      </section>
+
+      <div class="abstract-section encryption-section">
+        <svg xmlns="http://www.w3.org/2000/svg"
+             viewBox="0 0 800 520"
+             class="encryption-svg"
+             preserveAspectRatio="xMidYMid slice">
+          <defs>
+            <linearGradient id="encrypt-gradient" x1="0%" y1="0%" x2="100%" y2="100%">
+              <stop offset="0%" stop-color="#00D4AA" stop-opacity="0.6"/>
+              <stop offset="100%" stop-color="#4FC3F7" stop-opacity="0.6"/>
+            </linearGradient>
+          </defs>
+          <rect width="800" height="520" fill="#0A1929"/>
+          <g stroke="#00D4AA" stroke-width="2" fill="none" opacity="0.6">
+            <rect x="120" y="120" width="200" height="140" rx="12"/>
+            <rect x="480" y="120" width="200" height="140" rx="12"/>
+            <rect x="300" y="320" width="200" height="140" rx="12"/>
+          </g>
+          <g stroke="url(#encrypt-gradient)" stroke-width="3" stroke-linecap="round">
+            <line x1="320" y1="190" x2="480" y2="190">
+              <animate attributeName="stroke-dasharray" values="0,200;200,0" dur="3s" repeatCount="indefinite"/>
+            </line>
+            <line x1="220" y1="260" x2="360" y2="320">
+              <animate attributeName="stroke-dasharray" values="0,200;200,0" dur="3s" repeatCount="indefinite" begin="1s"/>
+            </line>
+            <line x1="580" y1="260" x2="440" y2="320">
+              <animate attributeName="stroke-dasharray" values="0,200;200,0" dur="3s" repeatCount="indefinite" begin="2s"/>
+            </line>
+          </g>
+          <g fill="#FFFFFF" opacity="0.8">
+            <circle cx="220" cy="190" r="8"/>
+            <circle cx="580" cy="190" r="8"/>
+            <circle cx="400" cy="390" r="8"/>
+          </g>
+        </svg>
+      </div>
+
+      <section class="section">
+        <div class="container card-grid">
+          <div class="card">
+            <div class="icon-row">
+              <img src="../assets/svg/icon-threat-hunting.svg" alt="Threat hunting icon" />
+              <h3 data-i18n="service_threat_title">Proactive Threat Hunting</h3>
+            </div>
+            <p data-i18n="service_threat_body">
+              Continuous hypothesis-driven hunting, threat intelligence fusion, and MITRE
+              ATT&CK mapping to eradicate stealth adversaries before impact.
+            </p>
+          </div>
+          <div class="card">
+            <div class="icon-row">
+              <img src="../assets/svg/icon-pentesting.svg" alt="Penetration testing icon" />
+              <h3 data-i18n="service_pentest_title">Penetration Testing</h3>
+            </div>
+            <p data-i18n="service_pentest_body">
+              Red-team emulation, social engineering validation, and compliance-ready reporting
+              for regulatory audits and board review.
+            </p>
+          </div>
+          <div class="card">
+            <div class="icon-row">
+              <img src="../assets/svg/icon-forensics.svg" alt="Digital forensics icon" />
+              <h3 data-i18n="service_dfir_title">Digital Forensics & Incident Response</h3>
+            </div>
+            <p data-i18n="service_dfir_body">
+              Rapid containment, forensic investigation, and crisis communications with secure
+              evidence preservation.
+            </p>
+          </div>
+          <div class="card">
+            <div class="icon-row">
+              <img src="../assets/svg/icon-training.svg" alt="Security awareness icon" />
+              <h3 data-i18n="service_awareness_title">Security Awareness Training</h3>
+            </div>
+            <p data-i18n="service_awareness_body">
+              Role-based simulations, executive briefings, and multilingual training to reduce
+              human-risk exposure.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <section class="section light">
+        <div class="container">
+          <h2>Resilient infrastructure</h2>
+          <p>Secure-by-design facilities and hardened environments support every service line.</p>
+          <div class="card-grid">
+            <div class="card">
+              <img
+                class="service-photo"
+                src="../assets/images/datacenter-server-room.jpg"
+                alt="Modern data center server room"
+              />
+              <h3>Secure data facilities</h3>
+              <p>Redundant, monitored infrastructure keeps client workloads protected and compliant.</p>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer>
+      <div class="container footer-grid">
+        <div>
+          <strong>Aegis Sentinel Global Cybersecurity Solutions</strong>
+          <p data-i18n="footer_tagline">Vigilance Beyond the Code</p>
+        </div>
+        <div>
+          <p data-i18n="footer_contact">Email: security@aegissentinel.com</p>
+          <p data-i18n="footer_rights">© 2024 Aegis Sentinel. All rights reserved.</p>
+        </div>
+      </div>
+    </footer>
+
+    <script src="../assets/js/i18n.js"></script>
+  </body>
+</html>
