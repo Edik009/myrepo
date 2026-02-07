@@ -32,6 +32,20 @@
           </section>
 
           <section class="section">
+            <h2>Create Portal User</h2>
+            <form class="card form-grid" data-admin-user-form>
+              <label>
+                <span>Client email</span>
+                <input type="email" name="email" required />
+              </label>
+              <button class="btn btn-primary" type="submit">Continue</button>
+              <p class="form-status" data-admin-user-status></p>
+              <p class="notice" data-admin-user-password></p>
+            </form>
+            <div class="card-grid" data-admin-user-list></div>
+          </section>
+
+          <section class="section">
             <h2>Profile Analysis</h2>
             <p>Launch analysis only for client-provided datasets with explicit consent.</p>
             <button class="btn btn-secondary" type="button" data-admin-refresh>

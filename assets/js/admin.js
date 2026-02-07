@@ -10,6 +10,10 @@ const agentContainer = document.querySelector("[data-agent-results]");
 const consentContainer = document.querySelector("[data-consent-results]");
 const commContainer = document.querySelector("[data-comm-results]");
 const refreshButton = document.querySelector("[data-admin-refresh]");
+const userForm = document.querySelector("[data-admin-user-form]");
+const userStatus = document.querySelector("[data-admin-user-status]");
+const userPassword = document.querySelector("[data-admin-user-password]");
+const userList = document.querySelector("[data-admin-user-list]");
 
 const renderCards = (container, items, emptyMessage) => {
   if (!container) {
@@ -41,12 +45,13 @@ const fetchAdminData = async (endpoint) => {
 };
 
 const loadAdminData = async () => {
-  const [analysis, demos, agents, consents, comms] = await Promise.all([
+  const [analysis, demos, agents, consents, comms, users] = await Promise.all([
     fetchAdminData("/api/admin/analysis-reports"),
     fetchAdminData("/api/admin/demo-sessions"),
     fetchAdminData("/api/admin/metrics-agents"),
     fetchAdminData("/api/admin/consents"),
-    fetchAdminData("/api/admin/communications")
+    fetchAdminData("/api/admin/communications"),
+    fetchAdminData("/api/admin/users")
   ]);
 
   renderCards(
@@ -58,6 +63,7 @@ const loadAdminData = async () => {
   renderCards(agentContainer, agents.items, "No active agents are connected.");
   renderCards(consentContainer, consents.items, "No consent records found.");
   renderCards(commContainer, comms.items, "No communication events logged.");
+  renderCards(userList, users.items, "No portal users created yet.");
 };
 
 if (loginForm) {
@@ -89,5 +95,35 @@ if (loginForm) {
 if (refreshButton) {
   refreshButton.addEventListener("click", () => {
     loadAdminData().catch(() => {});
+  });
+}
+
+if (userForm) {
+  userForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    if (!userStatus || !userPassword) {
+      return;
+    }
+    userStatus.textContent = "Creating user...";
+    userPassword.textContent = "";
+
+    const email = new FormData(userForm).get("email");
+    try {
+      const response = await fetch("/api/admin/create-user", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email })
+      });
+      if (!response.ok) {
+        throw new Error("Create user failed");
+      }
+      const result = await response.json();
+      userStatus.textContent = result.message;
+      userPassword.textContent = `Temporary password: ${result.password}`;
+      userForm.reset();
+      loadAdminData().catch(() => {});
+    } catch (error) {
+      userStatus.textContent = "Unable to create user.";
+    }
   });
 }

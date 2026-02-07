@@ -49,9 +49,8 @@
     </header>
 
     <main>
-      <section class="hero hero-portal">
+      <section class="section">
         <div class="container">
-          <span class="badge" data-i18n="portal_badge">Secure Access</span>
           <h1 data-i18n="portal_title">Client Portal</h1>
           <p data-i18n="portal_intro">
             Access active engagements, report downloads, and support tickets in a secure
@@ -60,26 +59,13 @@
         </div>
       </section>
 
-      <div class="abstract-section lock-section">
-        <svg xmlns="http://www.w3.org/2000/svg"
-             viewBox="0 0 800 520"
-             class="lock-svg"
-             preserveAspectRatio="xMidYMid slice">
-          <rect width="800" height="520" fill="#0A1929"/>
-          <rect x="260" y="210" width="280" height="220" rx="30" fill="#00D4AA" opacity="0.2"/>
-          <rect x="300" y="260" width="200" height="150" rx="20" fill="#00D4AA" opacity="0.5"/>
-          <path d="M340 260 V220 C340 180 460 180 460 220 V260" stroke="#FFFFFF" stroke-width="10" fill="none"/>
-          <circle cx="400" cy="330" r="22" fill="#0A1929"/>
-        </svg>
-      </div>
-
       <section class="section">
         <div class="container">
           <form class="card form-grid" data-portal-login>
             <h2 data-i18n="portal_login_title">Client login</h2>
             <label>
-              <span data-i18n="portal_login_user">Username</span>
-              <input name="username" required data-i18n-placeholder="portal_login_user_placeholder" />
+              <span data-i18n="portal_login_user">Email</span>
+              <input type="email" name="email" required data-i18n-placeholder="portal_login_user_placeholder" />
             </label>
             <label>
               <span data-i18n="portal_login_pass">Password</span>
@@ -93,6 +79,7 @@
             <button class="btn btn-primary" type="submit" data-i18n="portal_login_button">
               Sign in
             </button>
+            <p class="form-status" data-portal-login-status></p>
           </form>
 
           <div class="dashboard" data-portal-dashboard>
@@ -102,6 +89,44 @@
                 Your projects are actively monitored by the Zurich SOC.
               </p>
             </div>
+            <section class="section">
+              <h3 data-i18n="portal_subscription_title">Subscription management</h3>
+              <div class="card-grid">
+                <div class="card">
+                  <h4 data-i18n="portal_subscription_status_title">Status</h4>
+                  <p data-portal-subscription>Status: Trial</p>
+                </div>
+                <div class="card">
+                  <h4 data-i18n="portal_subscription_next_title">Next renewal</h4>
+                  <p data-portal-renewal>Pending activation</p>
+                </div>
+                <div class="card">
+                  <h4 data-i18n="portal_subscription_actions_title">Actions</h4>
+                  <button class="btn btn-secondary" type="button" data-portal-manage>
+                    Manage subscription
+                  </button>
+                </div>
+              </div>
+            </section>
+            <section class="section light">
+              <div class="container">
+                <h3 data-i18n="portal_activity_title">Security activity</h3>
+                <div class="card-grid">
+                  <div class="card">
+                    <h4 data-i18n="portal_activity_attacks_title">Detected attacks</h4>
+                    <p data-portal-attacks>No attacks recorded</p>
+                  </div>
+                  <div class="card">
+                    <h4 data-i18n="portal_activity_uptime_title">Uptime monitoring</h4>
+                    <p data-portal-uptime>Monitoring enabled</p>
+                  </div>
+                  <div class="card">
+                    <h4 data-i18n="portal_activity_reports_title">Latest report</h4>
+                    <p data-portal-latest-report>Ready for review</p>
+                  </div>
+                </div>
+              </div>
+            </section>
             <section class="section">
               <h3 data-i18n="portal_projects_title">Current projects</h3>
               <div class="card-grid">

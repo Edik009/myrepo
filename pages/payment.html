@@ -54,10 +54,12 @@
           <span class="badge" data-i18n="payment_badge">Secure Checkout</span>
           <h1 data-i18n="payment_title">Purchase a security report</h1>
           <p data-i18n="payment_intro">
-            Select a product and complete your payment securely. A download link will be
-            provided immediately after confirmation.
+            Access cutting-edge threat intelligence and actionable security analysis directly from
+            Aegis Sentinel Labs. Our self-service reports provide immediate, confidential
+            insights—from executive-level threat briefings to detailed technical assessments of
+            your external attack surface. Select a report, complete your secure payment, and
+            download your findings instantly to inform your security strategy.
           </p>
-          <p class="notice">Payments are currently in demo mode. No real charges are processed.</p>
         </div>
       </section>
 
@@ -83,14 +85,8 @@
 
       <section class="section light">
         <div class="container">
-          <form class="card form-grid" data-payment-form>
-            <label>
-              <span data-i18n="payment_product_label">Product</span>
-              <select name="product">
-                <option value="basic" data-i18n="payment_product_basic">Basic Audit</option>
-                <option value="extended" data-i18n="payment_product_extended">Extended Report</option>
-              </select>
-            </label>
+          <div class="card form-grid">
+            <h2 data-i18n="payment_products_title">Reports & Packages</h2>
             <label>
               <span data-i18n="payment_email_label">Email</span>
               <input
@@ -98,22 +94,124 @@
                 name="email"
                 required
                 data-i18n-placeholder="payment_email_placeholder"
+                data-payment-email
               />
             </label>
-            <button class="btn btn-primary" type="submit" data-i18n="payment_submit_button">
-              Pay securely
-            </button>
-            <p class="form-status" data-payment-status></p>
-            <div class="notice" data-payment-success style="display: none">
-              <strong data-i18n="payment_success_title">Payment confirmed.</strong>
-              <p data-i18n="payment_success_body">
-                Download your report below. A copy will also be emailed to you.
+            <label>
+              <span data-i18n="payment_crypto_label">Preferred crypto</span>
+              <select data-payment-currency>
+                <option value="btc">BTC</option>
+                <option value="eth">ETH</option>
+                <option value="usdttrc20">USDT (TRC20)</option>
+                <option value="usdtbep20">USDT (BEP20)</option>
+              </select>
+            </label>
+            <p class="notice" data-i18n="payment_crypto_blurb">
+              Pay with crypto. Protect digital sovereignty. Our crypto-only checkout maximizes
+              privacy, removes chargeback risk, and keeps delivery available 24/7.
+            </p>
+          </div>
+          <div class="card-grid">
+            <div class="card">
+              <h3 data-i18n="payment_product_1_title">Executive Threat Landscape Brief</h3>
+              <p data-i18n="payment_product_1_price">$499 · Basic Audit</p>
+              <p data-i18n="payment_product_1_body">
+                Quarterly overview of the most relevant threats for your sector, formatted for
+                executive leadership. Includes five emerging attack vectors, board-level guidance,
+                and regulatory impact analysis.
               </p>
-              <a href="../assets/images/sample-report.pdf" data-i18n="payment_download_link">
-                Download the report
+              <p data-i18n="payment_product_1_format">Format: PDF report (40–50 pages).</p>
+              <button
+                class="btn btn-primary"
+                data-payment-product="executive"
+                data-payment-amount="499"
+                data-i18n="payment_product_1_cta"
+              >
+                Buy report for $499
+              </button>
+            </div>
+            <div class="card">
+              <h3 data-i18n="payment_product_2_title">Digital Footprint Exposure Report</h3>
+              <p data-i18n="payment_product_2_price">$1,850 · Extended Report</p>
+              <p data-i18n="payment_product_2_body">
+                A detailed map of publicly accessible assets and associated risk, including
+                misconfigurations, outdated systems, and prioritized remediation guidance.
+              </p>
+              <p data-i18n="payment_product_2_format">Format: PDF report + CSV data appendix.</p>
+              <button
+                class="btn btn-primary"
+                data-payment-product="footprint"
+                data-payment-amount="1850"
+                data-i18n="payment_product_2_cta"
+              >
+                Buy report for $1,850
+              </button>
+            </div>
+            <div class="card">
+              <h3 data-i18n="payment_product_3_title">Cyber Resilience Benchmark Package</h3>
+              <p data-i18n="payment_product_3_price">$4,200 · Premium Package</p>
+              <p data-i18n="payment_product_3_body">
+                A comprehensive maturity benchmarking package combining executive and technical
+                reports plus a 60-minute analyst consultation.
+              </p>
+              <p data-i18n="payment_product_3_format">
+                Format: PDF report bundle + live session.
+              </p>
+              <button
+                class="btn btn-primary"
+                data-payment-product="benchmark"
+                data-payment-amount="4200"
+                data-i18n="payment_product_3_cta"
+              >
+                Buy package for $4,200
+              </button>
+            </div>
+            <div class="card">
+              <h3 data-i18n="payment_product_4_title">Enterprise Intelligence & Continuous Monitoring</h3>
+              <p data-i18n="payment_product_4_body">
+                For organizations requiring continuous protection and deep integration. Subscriptions
+                deliver monthly reports, analyst access, and real-time monitoring integration.
+              </p>
+              <p data-i18n="payment_product_4_format">
+                Includes: bespoke configuration, recurring briefings, real-time monitoring.
+              </p>
+              <a class="btn btn-secondary" href="../pages/contact.html" data-i18n="payment_product_4_cta">
+                Contact sales
               </a>
             </div>
-          </form>
+          </div>
+          <div class="card-grid">
+            <div class="card">
+              <h3 data-i18n="payment_guarantee_title">Security & Privacy</h3>
+              <p data-i18n="payment_guarantee_body">
+                Payments are processed by our PCI-DSS compliant partner. Your data and reports are
+                strictly confidential and used only for the requested analysis.
+              </p>
+            </div>
+            <div class="card">
+              <h3 data-i18n="payment_guarantee_use_title">Purpose of reports</h3>
+              <p data-i18n="payment_guarantee_use_body">
+                Reports are informational and designed to inform decisions or begin professional
+                collaboration.
+              </p>
+            </div>
+          </div>
+          <p class="form-status" data-payment-status></p>
+          <div class="notice" data-payment-success style="display: none">
+            <strong data-i18n="payment_success_title">Payment confirmed.</strong>
+            <p data-i18n="payment_success_body">
+              Download your report below. A copy will also be emailed to you.
+            </p>
+            <a href="../assets/images/sample-report.pdf" data-i18n="payment_download_link">
+              Download the report
+            </a>
+          </div>
+          <details class="notice">
+            <summary data-i18n="payment_crypto_toggle">
+              Why do we accept payment only in cryptocurrency?
+            </summary>
+            <p class="crypto-body" data-i18n="payment_crypto_body"></p>
+          </details>
         </div>
       </section>
     </main>

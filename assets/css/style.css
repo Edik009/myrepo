@@ -134,12 +134,17 @@ img {
 }
 
 .language-select select {
-  background: rgba(255, 255, 255, 0.08);
-  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: #0a1929;
+  border: 1px solid rgba(255, 255, 255, 0.25);
   border-radius: 999px;
-  color: var(--text);
+  color: #ffffff;
   font-size: 0.85rem;
   padding: 0.3rem 0.7rem;
+}
+
+.language-select select option {
+  background: #0a1929;
+  color: #ffffff;
 }
 
 .hero {
@@ -157,6 +162,23 @@ img {
 .hero h1 {
   font-size: clamp(2.2rem, 4vw, 3.5rem);
   line-height: 1.2;
+}
+
+.hero-stack p {
+  margin-top: 1rem;
+  max-width: 760px;
+}
+
+.service-outline {
+  margin-top: 1.5rem;
+  display: grid;
+  gap: 1.25rem;
+  max-width: 860px;
+}
+
+.service-outline h3 {
+  margin-bottom: 0.4rem;
+  font-size: 1.05rem;
 }
 
 .hero p {
@@ -260,7 +282,20 @@ img {
 }
 
 .cta-spaced {
-  margin-top: 1.25rem;
+  margin-top: 1.5rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.case-preview-card {
+  width: 100%;
+  max-width: 720px;
+  margin: 1.5rem 0 0;
+}
+
+.crypto-body {
+  white-space: pre-line;
 }
 
 .list {

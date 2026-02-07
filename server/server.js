@@ -16,6 +16,9 @@ const consentsPath = path.join(dataDir, "consents.json");
 const demosPath = path.join(dataDir, "demo_sessions.json");
 const agentsPath = path.join(dataDir, "metrics_agents.json");
 const commsPath = path.join(dataDir, "communications_log.json");
+const usersPath = path.join(dataDir, "portal_users.json");
+const nowPaymentsKey = process.env.NOWPAYMENTS_API_KEY;
+const nowPaymentsPublicKey = process.env.NOWPAYMENTS_PUBLIC_KEY;
 
 app.use(cors());
 app.use(express.json());
@@ -49,6 +52,15 @@ const appendJsonEntry = (filePath, entry) => {
   items.push(entry);
   writeJsonFile(filePath, items);
   return items;
+};
+
+const generatePassword = (length = 12) => {
+  const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789";
+  let password = "";
+  for (let i = 0; i < length; i += 1) {
+    password += alphabet[Math.floor(Math.random() * alphabet.length)];
+  }
+  return password;
 };
 
 const updateStats = (updater) => {
@@ -162,6 +174,48 @@ app.get("/api/process-queue", async (req, res) => {
 
 app.post("/api/create-payment-intent", (req, res) => {
   return res.status(501).json({ message: "Payments are disabled in demo mode." });
+});
+
+app.post("/api/nowpayments/create-payment", async (req, res) => {
+  const { product, amount, email, payCurrency } = req.body;
+  if (!nowPaymentsKey || !nowPaymentsPublicKey) {
+    return res.status(500).json({ message: "NowPayments not configured." });
+  }
+  if (!amount || !email || !isValidEmail(email)) {
+    return res.status(400).json({ message: "Valid email and amount are required." });
+  }
+
+  try {
+    const response = await fetch("https://api.nowpayments.io/v1/payment", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": nowPaymentsKey
+      },
+      body: JSON.stringify({
+        price_amount: amount,
+        price_currency: "usd",
+        pay_currency: payCurrency || "btc",
+        order_id: `order_${Date.now()}`,
+        order_description: product || "Aegis Sentinel report",
+        ipn_callback_url: process.env.NOWPAYMENTS_IPN_URL || "",
+        success_url: process.env.NOWPAYMENTS_SUCCESS_URL || "",
+        cancel_url: process.env.NOWPAYMENTS_CANCEL_URL || ""
+      })
+    });
+
+    if (!response.ok) {
+      return res.status(500).json({ message: "Payment initialization failed." });
+    }
+
+    const data = await response.json();
+    return res.json({
+      paymentUrl: data.payment_url,
+      paymentId: data.payment_id
+    });
+  } catch (error) {
+    return res.status(500).json({ message: "Payment initialization failed." });
+  }
 });
 
 app.post("/api/client-data-analysis", (req, res) => {
@@ -310,6 +364,63 @@ app.get("/api/admin/analytics", (req, res) => {
     reportsGenerated: reports.length,
     activeConsents: consents.length,
     demoSessions: demos.length
+  });
+});
+
+app.post("/api/admin/create-user", (req, res) => {
+  const { email } = req.body;
+  if (!email || !isValidEmail(email)) {
+    return res.status(400).json({ message: "Valid email is required." });
+  }
+
+  const users = readJsonFile(usersPath, []);
+  const exists = users.find((user) => user.email === email);
+  if (exists) {
+    return res.status(409).json({ message: "User already exists." });
+  }
+
+  const password = generatePassword(12);
+  const user = {
+    id: `user_${Date.now()}`,
+    email,
+    password,
+    createdAt: new Date().toISOString(),
+    subscription: { status: "Trial", nextRenewal: "Pending activation" },
+    security: {
+      attacks: "No attacks recorded",
+      uptime: "Monitoring enabled",
+      latestReport: "Ready for review"
+    }
+  };
+
+  appendJsonEntry(usersPath, user);
+  return res.json({ message: "User created.", password });
+});
+
+app.get("/api/admin/users", (req, res) => {
+  const users = readJsonFile(usersPath, []);
+  res.json({
+    items: users.map((user) => ({
+      title: user.email,
+      body: `Status: ${user.subscription?.status || "Active"}`,
+      meta: user.createdAt
+    }))
+  });
+});
+
+app.post("/api/portal/login", (req, res) => {
+  const { email, password } = req.body;
+  if (!email || !password) {
+    return res.status(400).json({ message: "Email and password are required." });
+  }
+  const users = readJsonFile(usersPath, []);
+  const user = users.find((entry) => entry.email === email && entry.password === password);
+  if (!user) {
+    return res.status(401).json({ message: "Invalid credentials." });
+  }
+  res.json({
+    subscription: user.subscription,
+    security: user.security
   });
 });
 
