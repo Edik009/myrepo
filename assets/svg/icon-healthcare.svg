@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" 
+     viewBox="0 0 64 64" 
+     width="64" 
+     height="64" 
+     class="icon-healthcare"
+     aria-labelledby="icon-healthcare-title"
+     role="img">
+  
+  <title id="icon-healthcare-title">Healthcare Solutions Icon</title>
+  <desc>A medical cross inside a shield representing healthcare cybersecurity solutions</desc>
+  
+  <defs>
+    <filter id="healthcare-glow">
+      <feGaussianBlur stdDeviation="1.5" result="coloredBlur"/>
+      <feMerge>
+        <feMergeNode in="coloredBlur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+  
+  <!-- Shield -->
+  <path d="M32,4 L56,16 V32 C56,48 32,58 32,58 C32,58 8,48 8,32 V16 Z" 
+        fill="#4FC3F7" 
+        opacity="0.8"
+        stroke="#00D4AA" 
+        stroke-width="1.5"
+        filter="url(#healthcare-glow)">
+    <animate attributeName="opacity" values="0.6;0.9;0.6" dur="3s" repeatCount="indefinite"/>
+  </path>
+  
+  <!-- Cross -->
+  <g transform="translate(32, 32)">
+    <rect x="-4" y="-12" width="8" height="24" rx="2" fill="#00D4AA"/>
+    <rect x="-12" y="-4" width="24" height="8" rx="2" fill="#00D4AA">
+      <animate attributeName="opacity" values="0.8;1;0.8" dur="2s" repeatCount="indefinite"/>
+    </rect>
+  </g>
+</svg>
