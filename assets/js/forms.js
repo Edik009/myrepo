@@ -15,16 +15,6 @@ const submitForm = async (form) => {
       throw new Error("Contact request failed");
     }
 
-    const telegramResponse = await fetch("/api/telegram", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
-
-    if (!telegramResponse.ok) {
-      throw new Error("Telegram request failed");
-    }
-
     status.textContent = status.getAttribute("data-success-text");
     status.style.color = "var(--accent)";
     form.reset();

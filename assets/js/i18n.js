@@ -1,6 +1,4 @@
 const defaultLang = "en";
-const languageSelector = document.querySelector("[data-language-selector]");
-
 const rtlLanguages = new Set(["ar"]);
 
 const resolveBasePath = () => (window.location.pathname.includes("/pages/") ? "../" : "./");
@@ -63,6 +61,7 @@ const setLanguage = async (lang) => {
 };
 
 const initLanguage = () => {
+  const languageSelector = document.querySelector("[data-language-selector]");
   const storedLang = localStorage.getItem("language") || defaultLang;
   if (languageSelector) {
     languageSelector.value = storedLang;
