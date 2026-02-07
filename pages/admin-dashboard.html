@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Admin Dashboard | Aegis Sentinel</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="../assets/css/style.css" />
+  </head>
+  <body>
+    <main class="section">
+      <div class="container">
+        <img class="brand-logo" src="../assets/images/ui-logo.svg" alt="Aegis Sentinel logo" />
+        <h1>Admin Dashboard</h1>
+        <form class="card form-grid" data-admin-login>
+          <label>
+            <span>Password</span>
+            <input type="password" name="password" required />
+          </label>
+          <button class="btn btn-primary" type="submit">Unlock</button>
+          <p class="form-status" data-admin-error></p>
+        </form>
+        <div data-admin-dashboard></div>
+      </div>
+    </main>
+
+    <script src="../assets/js/admin.js"></script>
+  </body>
+</html>

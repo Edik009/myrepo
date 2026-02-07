@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" 
+     viewBox="0 0 32 32" 
+     width="32" 
+     height="32" 
+     class="check-icon"
+     aria-labelledby="check-icon-title"
+     role="img">
+  
+  <title id="check-icon-title">Checkmark Icon</title>
+  <desc>A green checkmark inside a circle representing completion or success</desc>
+  
+  <circle cx="16" cy="16" r="14" fill="#00D4AA" opacity="0.2"/>
+  
+  <path d="M8,16 L14,22 L24,10" 
+        fill="none" 
+        stroke="#00D4AA" 
+        stroke-width="4" 
+        stroke-linecap="round" 
+        stroke-linejoin="round"
+        stroke-dasharray="0,30">
+    <animate attributeName="stroke-dasharray" values="0,30;30,0" dur="0.5s" fill="freeze"/>
+  </path>
+</svg>
