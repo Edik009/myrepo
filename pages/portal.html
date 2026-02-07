@@ -98,24 +98,6 @@
           </form>
 
           <div class="dashboard" data-portal-dashboard>
-            <div class="abstract-section dashboard-section">
-              <svg xmlns="http://www.w3.org/2000/svg"
-                   viewBox="0 0 800 520"
-                   class="dashboard-svg"
-                   preserveAspectRatio="xMidYMid slice">
-                <rect width="800" height="520" fill="#0A1929"/>
-                <g fill="#00D4AA" opacity="0.6">
-                  <rect x="120" y="140" width="200" height="120" rx="14"/>
-                  <rect x="360" y="140" width="320" height="120" rx="14"/>
-                  <rect x="120" y="300" width="260" height="120" rx="14"/>
-                  <rect x="420" y="300" width="260" height="120" rx="14"/>
-                </g>
-                <g stroke="#4FC3F7" stroke-width="3" fill="none">
-                  <path d="M160 220 L220 180 L280 210"/>
-                  <path d="M420 360 L500 320 L620 350"/>
-                </g>
-              </svg>
-            </div>
             <div class="notice">
               <strong data-i18n="portal_dashboard_title">Welcome back.</strong>
               <p data-i18n="portal_welcome">
@@ -145,15 +127,20 @@
                 <p data-i18n="portal_reports_body">
                   Download the latest compliance summary and risk assessment packs.
                 </p>
-                <a class="btn btn-secondary" href="#" data-i18n="portal_reports_button">
+                <a
+                  class="btn btn-secondary"
+                  href="../assets/images/sample-report.pdf"
+                  download
+                  data-i18n="portal_reports_button"
+                >
                   Download reports
                 </a>
               </div>
             </section>
             <div class="button-group">
-              <button class="btn btn-primary" data-i18n="portal_ticket_button">
+              <a class="btn btn-primary" href="../pages/contact.html" data-i18n="portal_ticket_button">
                 Open support ticket
-              </button>
+              </a>
               <button class="btn btn-secondary" data-portal-logout data-i18n="portal_logout_button">
                 Log out
               </button>
