@@ -193,7 +193,7 @@ app.post("/api/nowpayments/create-payment", async (req, res) => {
         "x-api-key": nowPaymentsKey
       },
       body: JSON.stringify({
-        price_amount: amount,
+        price_amount: Number(amount).toFixed(2),
         price_currency: "usd",
         pay_currency: payCurrency || "btc",
         order_id: `order_${Date.now()}`,
@@ -205,7 +205,8 @@ app.post("/api/nowpayments/create-payment", async (req, res) => {
     });
 
     if (!response.ok) {
-      return res.status(500).json({ message: "Payment initialization failed." });
+      const errorPayload = await response.json().catch(() => ({}));
+      return res.status(500).json({ message: errorPayload.message || "Payment initialization failed." });
     }
 
     const data = await response.json();
