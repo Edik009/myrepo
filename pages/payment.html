@@ -63,7 +63,27 @@
         </div>
       </section>
 
-      <section class="section light payment-section">
+      <div class="abstract-section payment-visuals">
+        <svg xmlns="http://www.w3.org/2000/svg"
+             viewBox="0 0 800 520"
+             class="payment-svg"
+             preserveAspectRatio="xMidYMid slice">
+          <rect width="800" height="520" fill="#0A1929"/>
+          <g transform="translate(200, 140)">
+            <circle cx="80" cy="80" r="70" fill="#00D4AA" opacity="0.2"/>
+            <path d="M50 80 L75 105 L120 55" stroke="#00D4AA" stroke-width="12" fill="none" stroke-linecap="round" stroke-linejoin="round">
+              <animate attributeName="stroke-dasharray" values="0,120;120,0" dur="1s" fill="freeze"/>
+            </path>
+          </g>
+          <g transform="translate(420, 150)">
+            <rect x="0" y="0" width="200" height="140" rx="24" fill="#4FC3F7" opacity="0.2"/>
+            <path d="M40 60 L100 30 L160 60 L100 90 Z" fill="#00D4AA" opacity="0.8"/>
+            <circle cx="100" cy="70" r="12" fill="#FFFFFF"/>
+          </g>
+        </svg>
+      </div>
+
+      <section class="section light">
         <div class="container">
           <div class="card form-grid">
             <h2 data-i18n="payment_products_title">Reports & Packages</h2>
@@ -91,7 +111,7 @@
               privacy, removes chargeback risk, and keeps delivery available 24/7.
             </p>
           </div>
-          <div class="card-grid payment-products">
+          <div class="card-grid">
             <div class="card">
               <h3 data-i18n="payment_product_1_title">Executive Threat Landscape Brief</h3>
               <p data-i18n="payment_product_1_price">$499 · Basic Audit</p>
@@ -160,7 +180,7 @@
               </a>
             </div>
           </div>
-          <div class="card-grid payment-guards">
+          <div class="card-grid">
             <div class="card">
               <h3 data-i18n="payment_guarantee_title">Security & Privacy</h3>
               <p data-i18n="payment_guarantee_body">
@@ -186,7 +206,7 @@
               Download the report
             </a>
           </div>
-          <details class="notice payment-details">
+          <details class="notice">
             <summary data-i18n="payment_crypto_toggle">
               Why do we accept payment only in cryptocurrency?
             </summary>

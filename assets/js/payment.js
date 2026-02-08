@@ -3,15 +3,8 @@ const paymentSuccess = document.querySelector("[data-payment-success]");
 const emailInput = document.querySelector("[data-payment-email]");
 const currencySelect = document.querySelector("[data-payment-currency]");
 
-const resolveApiBase = () => {
-  if (window.location.port === "3000") {
-    return "";
-  }
-  return "http://localhost:3000";
-};
-
 const createPayment = async ({ product, amount, email, payCurrency }) => {
-  const response = await fetch(`${resolveApiBase()}/api/nowpayments/create-payment`, {
+  const response = await fetch("/api/nowpayments/create-payment", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -23,8 +16,7 @@ const createPayment = async ({ product, amount, email, payCurrency }) => {
   });
 
   if (!response.ok) {
-    const errorData = await response.json().catch(() => ({}));
-    throw new Error(errorData.message || "Payment request failed");
+    throw new Error("Payment request failed");
   }
   return response.json();
 };
@@ -53,7 +45,7 @@ document.querySelectorAll("[data-payment-product]").forEach((button) => {
         window.open(result.paymentUrl, "_blank", "noopener");
       }
     } catch (error) {
-      paymentStatus.textContent = error.message || "Unable to create payment. Please try again.";
+      paymentStatus.textContent = "Unable to create payment. Please try again.";
     }
   });
 });

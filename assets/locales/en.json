@@ -265,9 +265,5 @@
   "portal_activity_reports_title": "Latest report",
   "payment_product_1_cta": "Buy report for $499",
   "payment_product_2_cta": "Buy report for $1,850",
-  "payment_product_3_cta": "Buy package for $4,200",
-  "about_licenses_title": "Our licenses",
-  "about_license_left": "Compliance Certificate",
-  "about_license_center": "International Operations License",
-  "about_license_right": "Security Certification"
+  "payment_product_3_cta": "Buy package for $4,200"
 }

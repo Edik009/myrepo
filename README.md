@@ -25,8 +25,6 @@ Open `index.html` in a browser or serve the repo with a static server.
 
 Language switching uses JSON files in `assets/locales/` and updates text with `data-i18n` keys.
 
-License images for the About page should be added manually to `assets/images/` and are not tracked in the repo.
-
 ## Backend setup (forms + Telegram + Stripe)
 
 1. Install dependencies:

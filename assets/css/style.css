@@ -637,7 +637,8 @@ footer {
 .lock-section,
 .code-section,
 .blog-cover-section,
-.dashboard-section {
+.dashboard-section,
+.payment-visuals {
   height: 340px;
 }
 
@@ -649,7 +650,8 @@ footer {
 .lock-svg,
 .code-svg,
 .blog-cover-svg,
-.dashboard-svg {
+.dashboard-svg,
+.payment-svg {
   width: 100%;
   height: 100%;
   display: block;
@@ -700,101 +702,4 @@ footer {
   display: grid;
   gap: 1rem;
   margin-top: 1.5rem;
-}
-
-.license-grid {
-  margin-top: 1.5rem;
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-  gap: 1.5rem;
-  align-items: end;
-}
-
-.license-card {
-  text-align: center;
-  display: grid;
-  gap: 0.6rem;
-  justify-items: center;
-  color: var(--muted);
-  font-size: 0.85rem;
-}
-
-.license-image {
-  width: 100%;
-  max-width: 240px;
-  border-radius: 0.75rem;
-  border: 1px solid rgba(10, 25, 41, 0.12);
-  box-shadow: 0 10px 24px rgba(10, 25, 41, 0.08);
-}
-
-.license-feature .license-image {
-  max-width: 280px;
-}
-
-.payment-section {
-  background: #ffffff;
-}
-
-.payment-section .card {
-  background: #ffffff;
-  border: 1px solid #dfe5ec;
-  box-shadow: 0 8px 24px rgba(10, 25, 41, 0.06);
-}
-
-.payment-products .card,
-.payment-guards .card {
-  border: 1px solid #d5dde7;
-}
-
-.payment-section .notice {
-  background: #f3f5f9;
-  border-color: #e0e6ef;
-  color: #1b2c42;
-}
-
-.payment-details summary {
-  cursor: pointer;
-  font-weight: 600;
-  color: #0b1b2b;
-}
-
-.payment-details summary::marker {
-  color: #0b1b2b;
-}
-
-.payment-details[open] summary {
-  margin-bottom: 0.75rem;
-}
-
-.payment-section input,
-.payment-section select {
-  background: #ffffff;
-  border: 1px solid #cfd6df;
-  color: #0b1b2b;
-}
-
-.payment-section input::placeholder,
-.payment-section textarea::placeholder {
-  color: #6b7b8f;
-}
-
-.payment-section .btn-primary {
-  background: #0b1b2b;
-  border-color: #0b1b2b;
-  color: #ffffff;
-}
-
-.payment-section .btn-primary:hover {
-  background: #14283e;
-  border-color: #14283e;
-}
-
-.payment-section .btn-secondary {
-  background: transparent;
-  color: #0b1b2b;
-  border-color: #0b1b2b;
-}
-
-.payment-section .btn-secondary:hover {
-  background: rgba(11, 27, 43, 0.08);
 }
