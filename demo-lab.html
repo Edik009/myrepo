@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Demo Lab | Aegis Sentinel</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./assets/css/style.css" />
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="container header-inner">
+        <div class="brand">
+          <img class="brand-logo" src="./assets/images/ui-logo.svg" alt="Aegis Sentinel logo" />
+          <span data-i18n="brand_tagline">Vigilance Beyond the Code</span>
+        </div>
+        <nav class="nav">
+          <a href="./index.html" data-i18n="nav_home">Home</a>
+          <a href="./pages/solutions.html" data-i18n="nav_solutions">Solutions</a>
+          <a href="./pages/portal.html" data-i18n="nav_portal">Client Portal</a>
+        </nav>
+        <div class="language-select">
+          <select data-language-selector>
+            <option value="en">English</option>
+            <option value="ru">Русский</option>
+            <option value="ua">Українська</option>
+            <option value="de">Deutsch</option>
+            <option value="fr">Français</option>
+            <option value="es">Español</option>
+            <option value="ar">العربية</option>
+            <option value="zh">简体中文</option>
+            <option value="ja">日本語</option>
+            <option value="pt-br">Português (BR)</option>
+            <option value="ko">한국어</option>
+          </select>
+        </div>
+      </div>
+    </header>
+
+    <main>
+      <section class="hero hero-portal">
+        <div class="container">
+          <span class="badge">Isolated Demo Lab</span>
+          <h1>Controlled monitoring simulations</h1>
+          <p>
+            This lab runs on test data only. No external resources are accessed without explicit
+            authorization.
+          </p>
+        </div>
+      </section>
+
+      <section class="section">
+        <div class="container">
+          <div class="card-grid">
+            <div class="card">
+              <h3>Load profile simulation</h3>
+              <p>Visualizes safe traffic patterns to demonstrate monitoring dashboards.</p>
+              <button class="btn btn-secondary" type="button" data-demo-action="load-test">
+                Run load test demo
+              </button>
+            </div>
+            <div class="card">
+              <h3>Pattern detection</h3>
+              <p>Emulates known signatures in a sandbox to show detection workflows.</p>
+              <button class="btn btn-secondary" type="button" data-demo-action="pattern-detection">
+                Run detection demo
+              </button>
+            </div>
+          </div>
+          <div class="card" style="margin-top: 2rem;">
+            <h3>Demo log</h3>
+            <div data-demo-log></div>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer>
+      <div class="container footer-grid">
+        <div>
+          <strong>Aegis Sentinel Global Cybersecurity Solutions</strong>
+          <p data-i18n="footer_tagline">Vigilance Beyond the Code</p>
+        </div>
+        <div>
+          <p data-i18n="footer_contact">Email: security@aegissentinel.com</p>
+          <p data-i18n="footer_rights">© 2026 Aegis Sentinel. All rights reserved.</p>
+        </div>
+        <div>
+          <div class="footer-iso">
+            <img class="iso-icon" src="./assets/images/document4_ISO.png" alt="ISO 27001:2022" />
+            <span data-i18n="footer_iso_text">ISO 27001:2022 Certified</span>
+            <div class="iso-tooltip">
+              <a
+                href="./assets/images/document4_ISO.png"
+                data-cert-item
+                data-cert-full="./assets/images/document4_ISO.png"
+                data-cert-caption="ISO 27001:2022 Certificate"
+              >
+                <img src="./assets/images/document4_ISO.png" alt="ISO 27001 certificate preview" />
+              </a>
+            </div>
+          </div>
+          <a class="footer-link" href="./pages/compliance.html" data-i18n="footer_compliance_link">
+            Compliance &amp; Certifications
+          </a>
+        </div>
+      </div>
+    </footer>
+
+    <script src="./assets/js/i18n.js"></script>
+    <script src="./assets/js/isolated_demo_environment.js"></script>
+      <script src="./assets/js/certificates.js"></script>
+  </body>
+</html>
