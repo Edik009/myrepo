@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" 
+     viewBox="0 0 64 64" 
+     width="64" 
+     height="64" 
+     class="icon-training"
+     aria-labelledby="icon-training-title"
+     role="img">
+  
+  <title id="icon-training-title">Security Awareness Training Icon</title>
+  <desc>An open book with a user icon representing security awareness training and education</desc>
+  
+  <defs>
+    <linearGradient id="training-gradient">
+      <stop offset="0%" stop-color="#00D4AA"/>
+      <stop offset="100%" stop-color="#4FC3F7"/>
+    </linearGradient>
+  </defs>
+  
+  <!-- Open book -->
+  <g transform="translate(10, 25)">
+    <path d="M22,10 L22,30 Q12,35 2,30 L2,10 Q12,5 22,10" fill="#4FC3F7" opacity="0.7" stroke="#00D4AA" stroke-width="1.5"/>
+    <path d="M22,10 L22,30 Q32,35 42,30 L42,10 Q32,5 22,10" fill="#FFFFFF" opacity="0.9" stroke="#00D4AA" stroke-width="1.5"/>
+    <rect x="6" y="14" width="12" height="2" rx="1" fill="#0A1929" opacity="0.4"/>
+    <rect x="6" y="18" width="10" height="2" rx="1" fill="#0A1929" opacity="0.4"/>
+    <rect x="6" y="22" width="11" height="2" rx="1" fill="#0A1929" opacity="0.4"/>
+    <rect x="26" y="14" width="12" height="2" rx="1" fill="#0A1929" opacity="0.3"/>
+    <rect x="26" y="18" width="10" height="2" rx="1" fill="#0A1929" opacity="0.3"/>
+    <rect x="26" y="22" width="11" height="2" rx="1" fill="#0A1929" opacity="0.3"/>
+    <animateTransform attributeName="transform" 
+                  type="translate" 
+                  values="10,25; 10,24; 10,25" 
+                  dur="4s" 
+                  repeatCount="indefinite"/>
+  </g>
+  
+  <!-- User silhouette -->
+  <g transform="translate(26, 8)">
+    <circle cx="6" cy="5" r="5" fill="url(#training-gradient)"/>
+    <path d="M6,12 Q0,16 0,20 V26 H12 V20 Q12,16 6,12" fill="url(#training-gradient)" opacity="0.9"/>
+  </g>
+</svg>
