@@ -331,5 +331,11 @@
   "footer_iso_text": "ISO 27001:2022 Certified",
   "footer_compliance_link": "Compliance & Certifications",
   "about_zug_license_title": "Zug headquarters license",
-  "about_zug_license_body": "Swiss regulatory authorization supporting our headquarters operations and European compliance programs."
+  "about_zug_license_body": "Swiss regulatory authorization supporting our headquarters operations and European compliance programs.",
+  "payment_toggle_reports": "Reports",
+  "payment_toggle_packages": "Packages",
+  "payment_modal_title": "Complete checkout",
+  "payment_modal_body": "Provide contact details and select your preferred settlement currency to continue.",
+  "payment_modal_cta": "Continue to payment",
+  "payment_product_4_price": "Custom"
 }

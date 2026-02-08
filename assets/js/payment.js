@@ -1,7 +1,12 @@
 const paymentStatus = document.querySelector("[data-payment-status]");
-const paymentSuccess = document.querySelector("[data-payment-success]");
 const emailInput = document.querySelector("[data-payment-email]");
 const currencySelect = document.querySelector("[data-payment-currency]");
+const modal = document.querySelector("[data-payment-modal]");
+const modalCloseButtons = document.querySelectorAll("[data-payment-close]");
+const modalConfirm = document.querySelector("[data-payment-confirm]");
+const tierButtons = document.querySelectorAll("[data-payment-tier]");
+const planCards = document.querySelectorAll("[data-payment-card]");
+let pendingPayment = null;
 
 const resolveApiBase = () => {
   if (window.location.port === "3000") {
@@ -29,9 +34,45 @@ const createPayment = async ({ product, amount, email, payCurrency }) => {
   return response.json();
 };
 
+const openModal = () => {
+  if (!modal) return;
+  modal.classList.add("open");
+  document.body.style.overflow = "hidden";
+};
+
+const closeModal = () => {
+  if (!modal) return;
+  modal.classList.remove("open");
+  document.body.style.overflow = "";
+};
+
+modalCloseButtons.forEach((button) => {
+  button.addEventListener("click", closeModal);
+});
+
+tierButtons.forEach((button) => {
+  button.addEventListener("click", () => {
+    tierButtons.forEach((btn) => btn.classList.toggle("active", btn === button));
+    const tier = button.dataset.paymentTier;
+    planCards.forEach((card) => {
+      card.style.display = card.dataset.paymentCard === tier ? "grid" : "none";
+    });
+  });
+});
+
 document.querySelectorAll("[data-payment-product]").forEach((button) => {
-  button.addEventListener("click", async () => {
-    if (!paymentStatus) {
+  button.addEventListener("click", () => {
+    pendingPayment = {
+      amount: Number(button.dataset.paymentAmount),
+      product: button.dataset.paymentProduct
+    };
+    openModal();
+  });
+});
+
+if (modalConfirm) {
+  modalConfirm.addEventListener("click", async () => {
+    if (!pendingPayment || !paymentStatus) {
       return;
     }
     const email = emailInput?.value;
@@ -39,16 +80,18 @@ document.querySelectorAll("[data-payment-product]").forEach((button) => {
       paymentStatus.textContent = "Please enter a valid email before checkout.";
       return;
     }
-    const amount = Number(button.dataset.paymentAmount);
-    const product = button.dataset.paymentProduct;
     const payCurrency = currencySelect?.value || "btc";
-
     paymentStatus.textContent = "Creating crypto payment...";
-    paymentSuccess.style.display = "none";
 
     try {
-      const result = await createPayment({ product, amount, email, payCurrency });
+      const result = await createPayment({
+        product: pendingPayment.product,
+        amount: pendingPayment.amount,
+        email,
+        payCurrency
+      });
       paymentStatus.textContent = "Payment initialized. Redirecting to checkout...";
+      closeModal();
       if (result.paymentUrl) {
         window.open(result.paymentUrl, "_blank", "noopener");
       }
@@ -56,4 +99,4 @@ document.querySelectorAll("[data-payment-product]").forEach((button) => {
       paymentStatus.textContent = error.message || "Unable to create payment. Please try again.";
     }
   });
-});
+}

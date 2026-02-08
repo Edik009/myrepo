@@ -4,6 +4,9 @@ const rtlLanguages = new Set(["ar"]);
 const resolveBasePath = () => (window.location.pathname.includes("/pages/") ? "../" : "./");
 
 const loadTranslations = async (lang) => {
+  if (window.TRANSLATIONS && window.TRANSLATIONS[lang]) {
+    return window.TRANSLATIONS[lang];
+  }
   const response = await fetch(`${resolveBasePath()}assets/locales/${lang}.json`);
   if (!response.ok) {
     throw new Error("Translation file not found");

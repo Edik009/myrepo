@@ -16,7 +16,9 @@
     <header class="site-header">
       <div class="container header-inner">
         <div class="brand">
-          <img class="brand-logo" src="../assets/images/ui-logo.svg" alt="Aegis Sentinel logo" />
+          <a href="../index.html" class="brand-link">
+            <img class="brand-logo" src="../assets/images/ui-logo.svg" alt="Aegis Sentinel logo" />
+                    </a>
           <span data-i18n="brand_tagline">Vigilance Beyond the Code</span>
         </div>
         <nav class="nav">
@@ -33,8 +35,7 @@
         <div class="language-select">
           <select data-language-selector>
             <option value="en">English</option>
-            <option value="ru">Русский</option>
-            <option value="ua">Українська</option>
+                        <option value="ua">Українська</option>
             <option value="de">Deutsch</option>
             <option value="fr">Français</option>
             <option value="es">Español</option>
@@ -63,44 +64,52 @@
         </div>
       </section>
 
-      <section class="section light payment-section">
+      <div class="abstract-section payment-network">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 360" class="payment-network-svg" preserveAspectRatio="xMidYMid slice">
+          <rect width="900" height="360" fill="#0a1929" />
+          <g stroke="#00D4AA" stroke-width="1.2" opacity="0.35">
+            <path d="M60 200 C160 80 320 80 420 200" />
+            <path d="M420 200 C520 320 740 320 840 200" />
+            <path d="M120 280 C240 140 420 140 540 280" />
+          </g>
+          <g fill="#4FC3F7" opacity="0.9">
+            <circle cx="120" cy="200" r="6" />
+            <circle cx="320" cy="120" r="5" />
+            <circle cx="520" cy="220" r="6" />
+            <circle cx="740" cy="180" r="5" />
+          </g>
+          <g fill="none" stroke="#ffffff" stroke-width="1" opacity="0.4">
+            <rect x="620" y="60" width="220" height="90" rx="12" />
+            <rect x="80" y="40" width="160" height="80" rx="10" />
+          </g>
+        </svg>
+      </div>
+
+      <section class="section payment-section">
         <div class="container">
-          <div class="card form-grid">
-            <h2 data-i18n="payment_products_title">Reports & Packages</h2>
-            <label>
-              <span data-i18n="payment_email_label">Email</span>
-              <input
-                type="email"
-                name="email"
-                required
-                data-i18n-placeholder="payment_email_placeholder"
-                data-payment-email
-              />
-            </label>
-            <label>
-              <span data-i18n="payment_crypto_label">Preferred crypto</span>
-              <select data-payment-currency>
-                <option value="btc">BTC</option>
-                <option value="eth">ETH</option>
-                <option value="usdttrc20">USDT (TRC20)</option>
-                <option value="usdtbep20">USDT (BEP20)</option>
-              </select>
-            </label>
-            <p class="notice" data-i18n="payment_crypto_blurb">
-              Pay with crypto. Protect digital sovereignty. Our crypto-only checkout maximizes
-              privacy, removes chargeback risk, and keeps delivery available 24/7.
-            </p>
+          <div class="button-group">
+            <div class="plan-toggle" role="tablist">
+              <button class="active" type="button" data-payment-tier="reports" data-i18n="payment_toggle_reports">
+                Reports
+              </button>
+              <button type="button" data-payment-tier="packages" data-i18n="payment_toggle_packages">
+                Packages
+              </button>
+            </div>
           </div>
-          <div class="card-grid payment-products">
-            <div class="card">
+          <div class="payment-plans">
+            <div class="plan-card" data-payment-card="reports">
               <h3 data-i18n="payment_product_1_title">Executive Threat Landscape Brief</h3>
-              <p data-i18n="payment_product_1_price">$499 · Basic Audit</p>
-              <p data-i18n="payment_product_1_body">
-                Quarterly overview of the most relevant threats for your sector, formatted for
-                executive leadership. Includes five emerging attack vectors, board-level guidance,
-                and regulatory impact analysis.
-              </p>
-              <p data-i18n="payment_product_1_format">Format: PDF report (40–50 pages).</p>
+              <div class="plan-price">$499</div>
+              <p class="plan-meta" data-i18n="payment_product_1_price">Basic Audit</p>
+              <ul class="plan-list">
+                <li data-i18n="payment_product_1_body">
+                  Quarterly overview of the most relevant threats for your sector, formatted for
+                  executive leadership. Includes five emerging attack vectors, board-level guidance,
+                  and regulatory impact analysis.
+                </li>
+                <li data-i18n="payment_product_1_format">Format: PDF report (40–50 pages).</li>
+              </ul>
               <button
                 class="btn btn-primary"
                 data-payment-product="executive"
@@ -110,14 +119,17 @@
                 Buy report for $499
               </button>
             </div>
-            <div class="card">
+            <div class="plan-card" data-payment-card="reports">
               <h3 data-i18n="payment_product_2_title">Digital Footprint Exposure Report</h3>
-              <p data-i18n="payment_product_2_price">$1,850 · Extended Report</p>
-              <p data-i18n="payment_product_2_body">
-                A detailed map of publicly accessible assets and associated risk, including
-                misconfigurations, outdated systems, and prioritized remediation guidance.
-              </p>
-              <p data-i18n="payment_product_2_format">Format: PDF report + CSV data appendix.</p>
+              <div class="plan-price">$1,850</div>
+              <p class="plan-meta" data-i18n="payment_product_2_price">Extended Report</p>
+              <ul class="plan-list">
+                <li data-i18n="payment_product_2_body">
+                  A detailed map of publicly accessible assets and associated risk, including
+                  misconfigurations, outdated systems, and prioritized remediation guidance.
+                </li>
+                <li data-i18n="payment_product_2_format">Format: PDF report + CSV data appendix.</li>
+              </ul>
               <button
                 class="btn btn-primary"
                 data-payment-product="footprint"
@@ -127,16 +139,17 @@
                 Buy report for $1,850
               </button>
             </div>
-            <div class="card">
+            <div class="plan-card" data-payment-card="packages">
               <h3 data-i18n="payment_product_3_title">Cyber Resilience Benchmark Package</h3>
-              <p data-i18n="payment_product_3_price">$4,200 · Premium Package</p>
-              <p data-i18n="payment_product_3_body">
-                A comprehensive maturity benchmarking package combining executive and technical
-                reports plus a 60-minute analyst consultation.
-              </p>
-              <p data-i18n="payment_product_3_format">
-                Format: PDF report bundle + live session.
-              </p>
+              <div class="plan-price">$4,200</div>
+              <p class="plan-meta" data-i18n="payment_product_3_price">Premium Package</p>
+              <ul class="plan-list">
+                <li data-i18n="payment_product_3_body">
+                  A comprehensive maturity benchmarking package combining executive and technical
+                  reports plus a 60-minute analyst consultation.
+                </li>
+                <li data-i18n="payment_product_3_format">Format: PDF report bundle + live session.</li>
+              </ul>
               <button
                 class="btn btn-primary"
                 data-payment-product="benchmark"
@@ -146,15 +159,18 @@
                 Buy package for $4,200
               </button>
             </div>
-            <div class="card">
+            <div class="plan-card" data-payment-card="packages">
               <h3 data-i18n="payment_product_4_title">Enterprise Intelligence & Continuous Monitoring</h3>
-              <p data-i18n="payment_product_4_body">
+              <div class="plan-price" data-i18n="payment_product_4_price">Custom</div>
+              <p class="plan-meta" data-i18n="payment_product_4_body">
                 For organizations requiring continuous protection and deep integration. Subscriptions
                 deliver monthly reports, analyst access, and real-time monitoring integration.
               </p>
-              <p data-i18n="payment_product_4_format">
-                Includes: bespoke configuration, recurring briefings, real-time monitoring.
-              </p>
+              <ul class="plan-list">
+                <li data-i18n="payment_product_4_format">
+                  Includes: bespoke configuration, recurring briefings, real-time monitoring.
+                </li>
+              </ul>
               <a class="btn btn-secondary" href="../pages/contact.html" data-i18n="payment_product_4_cta">
                 Contact sales
               </a>
@@ -177,23 +193,40 @@
             </div>
           </div>
           <p class="form-status" data-payment-status></p>
-          <div class="notice" data-payment-success style="display: none">
-            <strong data-i18n="payment_success_title">Payment confirmed.</strong>
-            <p data-i18n="payment_success_body">
-              Download your report below. A copy will also be emailed to you.
-            </p>
-            <a href="../assets/images/sample-report.pdf" data-i18n="payment_download_link">
-              Download the report
-            </a>
-          </div>
-          <details class="notice payment-details">
-            <summary data-i18n="payment_crypto_toggle">
-              Why do we accept payment only in cryptocurrency?
-            </summary>
-            <p class="crypto-body" data-i18n="payment_crypto_body"></p>
-          </details>
         </div>
       </section>
+      <div class="payment-modal" data-payment-modal>
+        <div class="payment-modal-backdrop" data-payment-close></div>
+        <div class="payment-modal-content">
+          <button class="payment-modal-close" type="button" data-payment-close>×</button>
+          <h2 data-i18n="payment_modal_title">Complete checkout</h2>
+          <p data-i18n="payment_modal_body">
+            Provide contact details and select your preferred settlement currency to continue.
+          </p>
+          <label>
+            <span data-i18n="payment_email_label">Email</span>
+            <input
+              type="email"
+              name="email"
+              required
+              data-i18n-placeholder="payment_email_placeholder"
+              data-payment-email
+            />
+          </label>
+          <label>
+            <span data-i18n="payment_crypto_label">Preferred crypto</span>
+            <select data-payment-currency>
+              <option value="btc">BTC</option>
+              <option value="eth">ETH</option>
+              <option value="usdttrc20">USDT (TRC20)</option>
+              <option value="usdtbep20">USDT (BEP20)</option>
+            </select>
+          </label>
+          <button class="btn btn-primary" type="button" data-payment-confirm data-i18n="payment_modal_cta">
+            Continue to payment
+          </button>
+        </div>
+      </div>
     </main>
 
     <footer>
@@ -228,7 +261,8 @@
       </div>
     </footer>
 
-    <script src="../assets/js/i18n.js"></script>
+        <script src="../assets/js/locales.js"></script>
+<script src="../assets/js/i18n.js"></script>
     <script src="../assets/js/leadscore.js"></script>
     <script>
       trackPageView("payment");
