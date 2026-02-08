@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" 
+     viewBox="0 0 500 150" 
+     width="500" 
+     height="150" 
+     class="logo-dark"
+     aria-labelledby="logo-dark-title"
+     role="img">
+  
+  <title id="logo-dark-title">Aegis Sentinel Dark Logo</title>
+  <desc>Company logo with text AEGIS SENTINEL for dark backgrounds</desc>
+  
+  <text x="10" y="80" 
+        font-family="Inter, sans-serif" 
+        font-weight="700" 
+        font-size="56" 
+        fill="#FFFFFF"
+        letter-spacing="2">
+    AEGIS
+  </text>
+  
+  <text x="230" y="80" 
+        font-family="Inter, sans-serif" 
+        font-weight="400" 
+        font-size="56" 
+        fill="#00D4AA"
+        letter-spacing="1">
+    SENTINEL
+  </text>
+  
+  <line x1="10" y1="100" x2="490" y2="100" 
+        stroke="#00D4AA" 
+        stroke-width="4" 
+        stroke-linecap="round"/>
+</svg>
