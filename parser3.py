@@ -35,7 +35,7 @@ MIN_SUBS = 300
 MAX_SUBS = 7000
 
 # Небольшая пауза между запросами. Слишком большое значение резко режет скорость.
-DELAY = 0.1
+DELAY = 0.5
 RESOLVE_COOLDOWN_SECONDS = 1.0
 PROFILE_COOLDOWN_SECONDS = 1.2
 
@@ -86,6 +86,9 @@ class SessionState:
     profiles_checked: int = 0
     profiles_success: int = 0
     profiles_failed: int = 0
+    current_stage: str = "IDLE"
+    channel_processed_current: int = 0
+    chat_processed_current: int = 0
 
     channel_limit: int = 1000
     chat_limit: int = 1000
@@ -113,6 +116,9 @@ class SessionState:
         self.profiles_checked = 0
         self.profiles_success = 0
         self.profiles_failed = 0
+        self.current_stage = "IDLE"
+        self.channel_processed_current = 0
+        self.chat_processed_current = 0
         self.queue.clear()
         self.approved_queue.clear()
         self.seen_channels.clear()
@@ -347,22 +353,31 @@ class TelegramParserSystem:
 
         profile_url = f"https://t.me/{user.username}" if user.username else f"tg://user?id={user.id}"
 
-        try:
-            await self._profile_cooldown()
-            full_user = await self.user_client(GetFullUserRequest(user))
-        except FloodWaitError as e:
-            logger.warning("FLOOD WAIT on profile user_id=%s seconds=%s", user.id, e.seconds)
-            if e.seconds < 60:
-                await asyncio.sleep(e.seconds)
-                return await self._parse_profile(owner_chat, user)
-            self.state.profiles_failed += 1
-            logger.info("PROFILE FAIL user_id=%s reason=flood_wait_long", user.id)
-            return
-        except Exception as e:
-            self.state.profiles_failed += 1
-            logger.info("PROFILE FAIL user_id=%s reason=exception", user.id)
-            logger.exception("Failed profile user_id=%s err=%s", user.id, e)
-            return
+        full_user = None
+        for attempt in range(1, 3):
+            try:
+                await self._profile_cooldown()
+                full_user = await self.user_client(GetFullUserRequest(user))
+                break
+            except FloodWaitError as e:
+                logger.warning(
+                    "FLOOD WAIT on profile user_id=%s seconds=%s attempt=%s",
+                    user.id,
+                    e.seconds,
+                    attempt,
+                )
+                if e.seconds < 60:
+                    await asyncio.sleep(e.seconds)
+                    continue
+                self.state.profiles_failed += 1
+                logger.info("PROFILE FAIL user_id=%s reason=flood_wait_long", user.id)
+                return
+            except Exception as e:
+                logger.info("PROFILE FAIL user_id=%s reason=exception attempt=%s", user.id, attempt)
+                logger.exception("Failed profile user_id=%s err=%s", user.id, e)
+                if attempt >= 2:
+                    self.state.profiles_failed += 1
+                    return
 
         self.state.visited_profiles.add(user.id)
         self.state.profiles_success += 1
@@ -420,9 +435,17 @@ class TelegramParserSystem:
         return None
 
     async def _parse_messages(self, owner_chat: int, entity, limit: int, source: str) -> None:
+        processed = 0
         async for msg in self.user_client.iter_messages(entity, limit=limit):
             if not self.state.running:
                 return
+            processed += 1
+            if source == "comment":
+                self.state.chat_processed_current = processed
+            else:
+                self.state.channel_processed_current = processed
+            if processed >= limit:
+                break
             if not isinstance(msg, Message):
                 continue
 
@@ -455,9 +478,11 @@ class TelegramParserSystem:
         if ent_id:
             self.state.visited_entities.add(ent_id)
         logger.info("ENTITY id=%s depth=channel", ent_id)
-
+        self.state.current_stage = "CHANNEL"
+        self.state.channel_processed_current = 0
         await self._parse_messages(owner_chat, entity, self.state.channel_limit, source=source)
 
+    async def _resolve_linked_chat(self, entity):
         linked_chat_id = getattr(entity, "linked_chat_id", None)
         if not linked_chat_id:
             try:
@@ -465,17 +490,24 @@ class TelegramParserSystem:
                 linked_chat_id = getattr(full.full_chat, "linked_chat_id", None)
             except Exception:
                 linked_chat_id = None
+        if not linked_chat_id:
+            return None
+        try:
+            return await self.user_client.get_entity(linked_chat_id)
+        except Exception:
+            return None
 
-        if linked_chat_id:
-            try:
-                linked = await self.user_client.get_entity(linked_chat_id)
-                linked_id = getattr(linked, "id", None)
-                if linked_id and linked_id not in self.state.visited_entities:
-                    self.state.visited_entities.add(linked_id)
-                    logger.info("ENTITY id=%s depth=chat", linked_id)
-                    await self._parse_messages(owner_chat, linked, self.state.chat_limit, source="comment")
-            except Exception as e:
-                logger.exception("Failed linked chat parsing entity_id=%s err=%s", ent_id, e)
+    async def _parse_chat_entity(self, owner_chat: int, entity) -> None:
+        ent_id = getattr(entity, "id", None)
+        if ent_id and ent_id in self.state.visited_entities:
+            logger.info("ENTITY id=%s depth=chat skipped=visited", ent_id)
+            return
+        if ent_id:
+            self.state.visited_entities.add(ent_id)
+        logger.info("ENTITY id=%s depth=chat", ent_id)
+        self.state.current_stage = "CHAT"
+        self.state.chat_processed_current = 0
+        await self._parse_messages(owner_chat, entity, self.state.chat_limit, source="comment")
 
     async def _parse_channel(self, owner_chat: int, username: str) -> None:
         entity = await self._safe_resolve_entity(username)
@@ -489,9 +521,16 @@ class TelegramParserSystem:
 
         await self.bot_client.send_message(owner_chat, "🚀 Парсинг запущен. Этап 1: стартовые каналы.")
 
+        chat_stage_entities = []
         while self.state.queue and self.state.running:
             username = self.state.queue.pop()  # DFS
-            await self._parse_channel(owner_chat, username)
+            entity = await self._safe_resolve_entity(username)
+            if not entity:
+                continue
+            await self._parse_channel_entity(owner_chat, entity, source="message")
+            linked = await self._resolve_linked_chat(entity)
+            if linked:
+                chat_stage_entities.append(linked)
 
         if not self.state.running:
             return
@@ -503,9 +542,19 @@ class TelegramParserSystem:
             "Если хотите продолжить — нажимайте на кнопки у найденных каналов.",
         )
 
+        while chat_stage_entities and self.state.running:
+            linked = chat_stage_entities.pop()
+            await self._parse_chat_entity(owner_chat, linked)
+
         while self.state.approved_queue and self.state.running:
             username = self.state.approved_queue.pop()  # DFS for approved
-            await self._parse_channel(owner_chat, username)
+            entity = await self._safe_resolve_entity(username)
+            if not entity:
+                continue
+            await self._parse_channel_entity(owner_chat, entity, source="message")
+            linked = await self._resolve_linked_chat(entity)
+            if linked:
+                await self._parse_chat_entity(owner_chat, linked)
 
         await self.finish(owner_chat)
 
@@ -517,7 +566,13 @@ class TelegramParserSystem:
         await self.bot_client.send_message(owner_chat, "🚀 Этап 2 запущен: парсинг одобренных каналов.")
         while self.state.approved_queue and self.state.running:
             username = self.state.approved_queue.pop()  # DFS
-            await self._parse_channel(owner_chat, username)
+            entity = await self._safe_resolve_entity(username)
+            if not entity:
+                continue
+            await self._parse_channel_entity(owner_chat, entity, source="message")
+            linked = await self._resolve_linked_chat(entity)
+            if linked:
+                await self._parse_chat_entity(owner_chat, linked)
         await self.finish(owner_chat)
 
     async def stop(self, owner_chat: int) -> None:
@@ -530,6 +585,9 @@ class TelegramParserSystem:
             f"⏱ Время: {elapsed} сек\n"
             f"📨 Сообщений: {self.state.message_count}\n"
             f"🔥 Каналов: {self.state.found_count}\n"
+            f"🧭 Этап: {self.state.current_stage}\n"
+            f"📡 Канал: {self.state.channel_processed_current}/{self.state.channel_limit}\n"
+            f"💬 Чат: {self.state.chat_processed_current}/{self.state.chat_limit}\n"
             f"👤 Профили проверено: {self.state.profiles_checked}\n"
             f"✅ Профили успешно: {self.state.profiles_success}\n"
             f"❌ Профили ошибок: {self.state.profiles_failed}"
