@@ -37,6 +37,7 @@ MAX_SUBS = 7000
 # Небольшая пауза между запросами. Слишком большое значение резко режет скорость.
 DELAY = 0.1
 RESOLVE_COOLDOWN_SECONDS = 1.0
+PROFILE_COOLDOWN_SECONDS = 1.2
 
 proxy = {
     "proxy_type": "http",
@@ -82,6 +83,9 @@ class SessionState:
 
     message_count: int = 0
     found_count: int = 0
+    profiles_checked: int = 0
+    profiles_success: int = 0
+    profiles_failed: int = 0
 
     channel_limit: int = 1000
     chat_limit: int = 1000
@@ -99,12 +103,16 @@ class SessionState:
     processed_candidates: Set[str] = field(default_factory=set)
 
     last_resolve_ts: float = 0.0
+    last_profile_ts: float = 0.0
 
     def reset_runtime(self) -> None:
         self.running = False
         self.started_at = 0.0
         self.message_count = 0
         self.found_count = 0
+        self.profiles_checked = 0
+        self.profiles_success = 0
+        self.profiles_failed = 0
         self.queue.clear()
         self.approved_queue.clear()
         self.seen_channels.clear()
@@ -114,6 +122,7 @@ class SessionState:
         self.pending_approval.clear()
         self.processed_candidates.clear()
         self.last_resolve_ts = 0.0
+        self.last_profile_ts = 0.0
 
 
 # =========================
@@ -138,6 +147,13 @@ class TelegramParserSystem:
         if delta < RESOLVE_COOLDOWN_SECONDS:
             await asyncio.sleep(RESOLVE_COOLDOWN_SECONDS - delta)
         self.state.last_resolve_ts = time.time()
+
+    async def _profile_cooldown(self) -> None:
+        now = time.time()
+        delta = now - self.state.last_profile_ts
+        if delta < PROFILE_COOLDOWN_SECONDS:
+            await asyncio.sleep(PROFILE_COOLDOWN_SECONDS - delta)
+        self.state.last_profile_ts = time.time()
 
     @staticmethod
     def _normalize_username(raw: str) -> str:
@@ -320,26 +336,38 @@ class TelegramParserSystem:
 
     async def _parse_profile(self, owner_chat: int, user: User) -> None:
         if not user or not user.id:
+            logger.info("PROFILE SKIPPED reason=invalid_user")
             return
         if user.id in self.state.visited_profiles:
+            logger.info("PROFILE SKIPPED user_id=%s reason=visited", user.id)
             return
 
-        self.state.visited_profiles.add(user.id)
-        logger.info("ENTITY id=%s depth=profile", user.id)
+        self.state.profiles_checked += 1
+        logger.info("PROFILE START user_id=%s", user.id)
 
         profile_url = f"https://t.me/{user.username}" if user.username else f"tg://user?id={user.id}"
 
         try:
+            await self._profile_cooldown()
             full_user = await self.user_client(GetFullUserRequest(user))
         except FloodWaitError as e:
             logger.warning("FLOOD WAIT on profile user_id=%s seconds=%s", user.id, e.seconds)
             if e.seconds < 60:
                 await asyncio.sleep(e.seconds)
                 return await self._parse_profile(owner_chat, user)
+            self.state.profiles_failed += 1
+            logger.info("PROFILE FAIL user_id=%s reason=flood_wait_long", user.id)
             return
         except Exception as e:
+            self.state.profiles_failed += 1
+            logger.info("PROFILE FAIL user_id=%s reason=exception", user.id)
             logger.exception("Failed profile user_id=%s err=%s", user.id, e)
             return
+
+        self.state.visited_profiles.add(user.id)
+        self.state.profiles_success += 1
+        logger.info("PROFILE SUCCESS user_id=%s", user.id)
+        logger.info("ENTITY id=%s depth=profile", user.id)
 
         bio = (getattr(full_user.full_user, "about", None) or "").strip()
         for candidate in self._extract_candidates(bio):
@@ -362,6 +390,35 @@ class TelegramParserSystem:
             except Exception as e:
                 logger.exception("Attached channel resolve failed user_id=%s err=%s", user.id, e)
 
+    async def _resolve_sender(self, msg: Message):
+        sender = None
+        try:
+            sender = await msg.get_sender()
+        except Exception as e:
+            logger.info("PROFILE SKIPPED reason=get_sender_error err=%s", e)
+
+        if sender is not None:
+            return sender
+
+        sender_id = getattr(msg, "sender_id", None)
+        if sender_id:
+            try:
+                return await self.user_client.get_entity(sender_id)
+            except Exception:
+                pass
+
+        input_sender = None
+        try:
+            input_sender = await msg.get_input_sender()
+        except Exception:
+            input_sender = None
+        if input_sender:
+            try:
+                return await self.user_client.get_entity(input_sender)
+            except Exception:
+                pass
+        return None
+
     async def _parse_messages(self, owner_chat: int, entity, limit: int, source: str) -> None:
         async for msg in self.user_client.iter_messages(entity, limit=limit):
             if not self.state.running:
@@ -376,11 +433,15 @@ class TelegramParserSystem:
                 await self._process_candidate(owner_chat, candidate, source=source)
                 await self._antiban_delay()
 
-            sender = await msg.get_sender()
+            sender = await self._resolve_sender(msg)
             if isinstance(sender, Channel) and sender.username:
                 await self._process_candidate(owner_chat, sender.username, source="comment")
+            elif isinstance(sender, Channel):
+                logger.info("PROFILE SKIPPED reason=channel_sender_without_username id=%s", sender.id)
             elif isinstance(sender, User):
                 await self._parse_profile(owner_chat, sender)
+            else:
+                logger.info("PROFILE SKIPPED reason=sender_unavailable message_id=%s", msg.id)
 
             await self._antiban_delay()
 
@@ -458,7 +519,10 @@ class TelegramParserSystem:
         return (
             f"⏱ Время: {elapsed} сек\n"
             f"📨 Сообщений: {self.state.message_count}\n"
-            f"🔥 Каналов: {self.state.found_count}"
+            f"🔥 Каналов: {self.state.found_count}\n"
+            f"👤 Профили проверено: {self.state.profiles_checked}\n"
+            f"✅ Профили успешно: {self.state.profiles_success}\n"
+            f"❌ Профили ошибок: {self.state.profiles_failed}"
         )
 
     async def finish(self, owner_chat: int) -> None:
@@ -467,6 +531,9 @@ class TelegramParserSystem:
         payload = {
             "processed": self.state.message_count,
             "found": self.state.found_count,
+            "profiles_checked": self.state.profiles_checked,
+            "profiles_success": self.state.profiles_success,
+            "profiles_failed": self.state.profiles_failed,
             "channels": [
                 {
                     "username": c.username,
