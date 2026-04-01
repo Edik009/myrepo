@@ -417,6 +417,7 @@ class TelegramParserSystem:
 
         sender_id = getattr(msg, "sender_id", None)
         if sender_id:
+            logger.info("PROFILE RETRY sender_id=%s message_id=%s", sender_id, getattr(msg, "id", None))
             try:
                 return await self.user_client.get_entity(sender_id)
             except Exception:
@@ -428,6 +429,7 @@ class TelegramParserSystem:
         except Exception:
             input_sender = None
         if input_sender:
+            logger.info("PROFILE RETRY input_sender message_id=%s", getattr(msg, "id", None))
             try:
                 return await self.user_client.get_entity(input_sender)
             except Exception:
@@ -436,7 +438,7 @@ class TelegramParserSystem:
 
     async def _parse_messages(self, owner_chat: int, entity, limit: int, source: str) -> None:
         processed = 0
-        async for msg in self.user_client.iter_messages(entity, limit=limit):
+        async for msg in self.user_client.iter_messages(entity, limit=None):
             if not self.state.running:
                 return
             processed += 1
@@ -465,7 +467,9 @@ class TelegramParserSystem:
             elif isinstance(sender, User):
                 await self._parse_profile(owner_chat, sender)
             else:
-                logger.info("PROFILE SKIPPED reason=sender_unavailable message_id=%s", msg.id)
+                self.state.profiles_checked += 1
+                self.state.profiles_failed += 1
+                logger.info("PROFILE FINAL FAIL message_id=%s reason=sender_unavailable", msg.id)
 
             await self._antiban_delay()
 
@@ -521,7 +525,6 @@ class TelegramParserSystem:
 
         await self.bot_client.send_message(owner_chat, "🚀 Парсинг запущен. Этап 1: стартовые каналы.")
 
-        chat_stage_entities = []
         while self.state.queue and self.state.running:
             username = self.state.queue.pop()  # DFS
             entity = await self._safe_resolve_entity(username)
@@ -530,7 +533,7 @@ class TelegramParserSystem:
             await self._parse_channel_entity(owner_chat, entity, source="message")
             linked = await self._resolve_linked_chat(entity)
             if linked:
-                chat_stage_entities.append(linked)
+                await self._parse_chat_entity(owner_chat, linked)
 
         if not self.state.running:
             return
@@ -541,10 +544,6 @@ class TelegramParserSystem:
             "Теперь доступны каналы, отмеченные кнопкой '✅ Парсить потом'.\n"
             "Если хотите продолжить — нажимайте на кнопки у найденных каналов.",
         )
-
-        while chat_stage_entities and self.state.running:
-            linked = chat_stage_entities.pop()
-            await self._parse_chat_entity(owner_chat, linked)
 
         while self.state.approved_queue and self.state.running:
             username = self.state.approved_queue.pop()  # DFS for approved
