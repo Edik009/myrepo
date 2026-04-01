@@ -38,7 +38,6 @@ DELAY = 0.15
 RESOLVE_COOLDOWN_SECONDS = 0.3
 PROFILE_WORKERS = 8
 PROFILE_BATCH_SIZE = 20
-CANDIDATE_RETRY_TTL_SECONDS = 300.0
 
 proxy = {
     "proxy_type": "http",
@@ -108,9 +107,11 @@ class SessionState:
 
     found_channels_all: Dict[int, FoundChannel] = field(default_factory=dict)
     found_channels_filtered: Dict[int, FoundChannel] = field(default_factory=dict)
+    processed_usernames: Set[str] = field(default_factory=set)
 
-    pending_approval: Set[str] = field(default_factory=set)
-    processed_candidates: Dict[str, float] = field(default_factory=dict)
+    pending_approval: Dict[int, str] = field(default_factory=dict)
+    stage2_total_channels: int = 0
+    stage2_processed_channels: int = 0
 
     last_resolve_ts: float = 0.0
 
@@ -134,8 +135,10 @@ class SessionState:
         self.visited_profiles.clear()
         self.found_channels_all.clear()
         self.found_channels_filtered.clear()
+        self.processed_usernames.clear()
         self.pending_approval.clear()
-        self.processed_candidates.clear()
+        self.stage2_total_channels = 0
+        self.stage2_processed_channels = 0
         self.last_resolve_ts = 0.0
 
 
@@ -184,7 +187,7 @@ class TelegramParserSystem:
         lowered = username.lower()
         if lowered.startswith("+") or lowered.startswith("joinchat"):
             return True
-        return ("bot" in lowered) or (len(username) < 5)
+        return "bot" in lowered
 
     def _extract_candidates(self, text: Optional[str]) -> Set[str]:
         if not text:
@@ -288,15 +291,9 @@ class TelegramParserSystem:
         profile_url: Optional[str] = None,
     ) -> bool:
         username = self._normalize_username(username)
-        now = time.time()
-        last_attempt_ts = self.state.processed_candidates.get(username)
-        if last_attempt_ts and (now - last_attempt_ts) < CANDIDATE_RETRY_TTL_SECONDS:
-            return False
 
         if self._is_trash_username(username):
             return False
-
-        self.state.processed_candidates[username] = now
         entity = await self._safe_resolve_entity(username)
         if not entity:
             return False
@@ -308,9 +305,10 @@ class TelegramParserSystem:
         channel_id = int(getattr(entity, "id", 0) or 0)
         normalized_username = self._normalize_username(getattr(entity, "username", None) or username)
         channel_url = f"https://t.me/{normalized_username}"
-        normalized_profile_url = profile_url or f"tg://user?id={getattr(entity, 'id', 0)}"
+        normalized_profile_url = profile_url or "unknown"
 
-        self._queue_add(normalized_username, approved=False)
+        if channel_id and channel_id not in self.state.visited_entities:
+            self._queue_add(normalized_username, approved=False)
 
         is_new_channel = channel_id not in self.state.found_channels_all
         if is_new_channel:
@@ -327,7 +325,7 @@ class TelegramParserSystem:
             if channel_id not in self.state.found_channels_filtered:
                 self.state.found_channels_filtered[channel_id] = self.state.found_channels_all[channel_id]
                 self.state.found_count = len(self.state.found_channels_filtered)
-                self.state.pending_approval.add(normalized_username)
+                self.state.pending_approval[channel_id] = normalized_username
                 await self._send_found_channel(
                     owner_chat,
                     normalized_username,
@@ -464,7 +462,8 @@ class TelegramParserSystem:
 
     async def _handle_sender_entity(self, owner_chat: int, msg: Message, sender) -> bool:
         if isinstance(sender, Channel) and sender.username:
-            await self._process_candidate(owner_chat, sender.username, source="comment")
+            sender_profile_url = f"tg://user?id={getattr(msg, 'sender_id', 0)}"
+            await self._process_candidate(owner_chat, sender.username, source="comment", profile_url=sender_profile_url)
             return True
         if isinstance(sender, Channel):
             logger.info("PROFILE SKIPPED reason=channel_sender_without_username id=%s", sender.id)
@@ -682,11 +681,13 @@ class TelegramParserSystem:
             key=lambda ch: (-int(ch.subs or 0), ch.username),
         )
 
-        remaining_candidates = list(self.state.queue) + list(self.state.approved_queue) + list(self.state.pending_approval)
+        remaining_candidates = list(self.state.queue) + list(self.state.approved_queue) + list(self.state.pending_approval.values())
         remaining_usernames: List[str] = []
         remaining_seen: Set[str] = set()
         for username in remaining_candidates:
             normalized = self._normalize_username(username)
+            if normalized in self.state.processed_usernames:
+                continue
             if normalized in remaining_seen:
                 continue
             remaining_seen.add(normalized)
@@ -734,6 +735,7 @@ class TelegramParserSystem:
             if self.stop_requested:
                 break
             username = self.state.queue.pop()  # DFS
+            self.state.processed_usernames.add(username)
             entity = await self._safe_resolve_entity(username)
             if not entity:
                 continue
@@ -765,6 +767,7 @@ class TelegramParserSystem:
     async def run_approved_only(self, owner_chat: int) -> None:
         self.state.running = True
         self.stop_requested = False
+        self.state.visited_entities.clear()
         self.state.message_count = 0
         self.state.profiles_checked = 0
         self.state.profiles_success = 0
@@ -774,6 +777,8 @@ class TelegramParserSystem:
         self.state.channel_processed_current = 0
         self.state.chat_processed_current = 0
         self.state.current_stage = "STAGE 2"
+        self.state.stage2_total_channels = len(self.state.approved_queue)
+        self.state.stage2_processed_channels = 0
         if not self.state.started_at:
             self.state.started_at = time.time()
 
@@ -782,6 +787,8 @@ class TelegramParserSystem:
             if self.stop_requested:
                 break
             username = self.state.approved_queue.pop()  # DFS
+            self.state.processed_usernames.add(username)
+            self.state.stage2_processed_channels += 1
             entity = await self._safe_resolve_entity(username)
             if not entity:
                 continue
@@ -806,12 +813,12 @@ class TelegramParserSystem:
         elapsed = int(time.time() - self.state.started_at) if self.state.started_at else 0
         stage2_extra = ""
         if self.state.current_stage == "STAGE 2":
-            in_queue = len(self.state.approved_queue)
-            processed = self.state.channel_processed_current
-            left = max(0, in_queue - processed)
+            total = self.state.stage2_total_channels
+            processed = self.state.stage2_processed_channels
+            left = max(0, total - processed)
             stage2_extra = (
                 "\n\n📊 ЭТАП 2\n"
-                f"Каналов в очереди: {in_queue}\n"
+                f"Каналов в очереди: {total}\n"
                 f"Обработано: {processed}\n"
                 f"Осталось: {left}"
             )
@@ -961,12 +968,14 @@ async def main() -> None:
         data = event.data or b""
         if data.startswith(CALLBACK_PARSE):
             username = data.split(b":", 1)[1].decode().strip().lower()
-            if username in system.state.pending_approval:
+            if username in system.state.pending_approval.values():
                 system._queue_add(username, approved=True)
             await event.answer("Добавлено в очередь этапа 2")
         elif data.startswith(CALLBACK_SKIP):
             username = data.split(b":", 1)[1].decode().strip().lower()
-            system.state.pending_approval.discard(username)
+            for channel_id, pending_username in list(system.state.pending_approval.items()):
+                if pending_username == username:
+                    del system.state.pending_approval[channel_id]
             await event.answer("Пропущено")
         elif data == CALLBACK_STAGE2_YES:
             system.awaiting_stage2_confirmation = False
