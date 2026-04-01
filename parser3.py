@@ -3,6 +3,7 @@ import logging
 import os
 import re
 import time
+import json
 from collections import deque
 from dataclasses import dataclass, field
 from typing import Deque, Dict, List, Optional, Set, Tuple
@@ -36,8 +37,8 @@ MAX_SUBS = 7000
 # Небольшая пауза между запросами. Слишком большое значение резко режет скорость.
 DELAY = 0.08
 RESOLVE_COOLDOWN_SECONDS = 0.08
-PROFILE_WORKERS = 18
-CANDIDATE_WORKERS = 30
+PROFILE_WORKERS = 5
+CANDIDATE_WORKERS = 5
 MAX_CANDIDATE_RETRIES = 3
 MAX_PROFILE_RETRIES = 2
 
@@ -55,6 +56,8 @@ CALLBACK_STAGE2_YES = b"stage2_yes"
 CALLBACK_STAGE2_NO = b"stage2_no"
 
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
+PENDING_APPROVAL_FILE = "pending_approval.json"
+APPROVED_QUEUE_FILE = "approved_queue.json"
 
 
 # =========================
@@ -138,6 +141,7 @@ class SessionState:
     stage2_processed_channels: int = 0
 
     last_resolve_ts: float = 0.0
+    last_subs_ts: float = 0.0
 
     def reset_runtime(self) -> None:
         self.running = False
@@ -169,6 +173,7 @@ class SessionState:
         self.stage2_total_channels = 0
         self.stage2_processed_channels = 0
         self.last_resolve_ts = 0.0
+        self.last_subs_ts = 0.0
 
 
 # =========================
@@ -185,9 +190,11 @@ class TelegramParserSystem:
         self.profile_semaphore = asyncio.Semaphore(PROFILE_WORKERS)
         self.candidate_semaphore = asyncio.Semaphore(CANDIDATE_WORKERS)
         self.inflight_profiles: Set[Tuple[int, Optional[int]]] = set()
+        self.resolving_now: Set[str] = set()
         self.stop_requested = False
         self.pending_tasks: Set[asyncio.Task] = set()
         self.awaiting_stage2_confirmation = False
+        self._load_stage2_state()
 
     # ---------- Utility ----------
     async def _antiban_delay(self) -> None:
@@ -199,6 +206,49 @@ class TelegramParserSystem:
         if delta < RESOLVE_COOLDOWN_SECONDS:
             await asyncio.sleep(RESOLVE_COOLDOWN_SECONDS - delta)
         self.state.last_resolve_ts = time.time()
+
+    async def _subs_cooldown(self) -> None:
+        now = time.time()
+        delta = now - self.state.last_subs_ts
+        if delta < 1.0:
+            logger.info("SUBS REQUEST throttled")
+            await asyncio.sleep(1.0 - delta)
+        self.state.last_subs_ts = time.time()
+
+    def _save_stage2_state(self) -> None:
+        pending_data = {str(k): v for k, v in self.state.pending_approval.items()}
+        approved_data = list(self.state.approved_queue)
+        with open(PENDING_APPROVAL_FILE, "w", encoding="utf-8") as f:
+            json.dump(pending_data, f, ensure_ascii=False, indent=2)
+        with open(APPROVED_QUEUE_FILE, "w", encoding="utf-8") as f:
+            json.dump(approved_data, f, ensure_ascii=False, indent=2)
+
+    def _load_stage2_state(self) -> None:
+        pending: Dict[int, str] = {}
+        approved: Deque[int] = deque()
+        if os.path.exists(PENDING_APPROVAL_FILE):
+            try:
+                with open(PENDING_APPROVAL_FILE, "r", encoding="utf-8") as f:
+                    raw_pending = json.load(f)
+                if isinstance(raw_pending, dict):
+                    for key, value in raw_pending.items():
+                        if str(key).isdigit() and isinstance(value, str):
+                            pending[int(key)] = value
+            except Exception:
+                pending = {}
+        if os.path.exists(APPROVED_QUEUE_FILE):
+            try:
+                with open(APPROVED_QUEUE_FILE, "r", encoding="utf-8") as f:
+                    raw_approved = json.load(f)
+                if isinstance(raw_approved, list):
+                    for value in raw_approved:
+                        if isinstance(value, int):
+                            approved.append(value)
+            except Exception:
+                approved = deque()
+        self.state.pending_approval = pending
+        self.state.approved_queue = approved
+        self.state.approved_set = set(approved)
 
     @staticmethod
     def _normalize_username(raw: str) -> str:
@@ -230,6 +280,11 @@ class TelegramParserSystem:
         return out
 
     async def _safe_resolve_entity(self, username: str):
+        username = self._normalize_username(username)
+        if username in self.resolving_now:
+            logger.info("RESOLVE SKIPPED duplicate username=%s", username)
+            return None
+        self.resolving_now.add(username)
         logger.info("RESOLVE username=%s", username)
         try:
             await self._resolve_cooldown()
@@ -250,9 +305,12 @@ class TelegramParserSystem:
         except Exception as e:
             logger.exception("Resolve failed username=%s err=%s", username, e)
             return None
+        finally:
+            self.resolving_now.discard(username)
 
     async def _safe_get_subs(self, entity) -> int:
         try:
+            await self._subs_cooldown()
             full = await self.user_client(GetFullChannelRequest(entity))
             subs = int(getattr(full.full_chat, "participants_count", 0) or 0)
             logger.info("CHANNEL subs username=%s subs=%s", getattr(entity, "username", None), subs)
@@ -310,6 +368,8 @@ class TelegramParserSystem:
 
     def _queue_add(self, username: str, approved: bool = False, channel_id: Optional[int] = None) -> None:
         normalized = self._normalize_username(username)
+        if normalized in self.state.processed_usernames:
+            return
         if approved and channel_id and channel_id in self.state.approved_set:
             return
         if normalized in self.state.queue_set:
@@ -324,6 +384,7 @@ class TelegramParserSystem:
             if channel_id:
                 self.state.approved_set.add(channel_id)
                 self.state.approved_queue.append(channel_id)
+                self._save_stage2_state()
         else:
             self.state.queue.append(normalized)
 
@@ -378,7 +439,11 @@ class TelegramParserSystem:
         profile_url: Optional[str],
         attempt: int = 0,
     ) -> None:
+        if self.stop_requested:
+            return
         async with self.candidate_semaphore:
+            if self.stop_requested:
+                return
             await self._process_candidate(
                 owner_chat=owner_chat,
                 username=username,
@@ -459,6 +524,7 @@ class TelegramParserSystem:
                 self.state.found_channels_filtered[channel_id] = self.state.found_channels_all[channel_id]
                 self.state.found_count = len(self.state.found_channels_filtered)
                 self.state.pending_approval[channel_id] = normalized_username
+                self._save_stage2_state()
                 await self._send_found_channel(
                     owner_chat,
                     normalized_username,
@@ -591,7 +657,11 @@ class TelegramParserSystem:
         attempt: int = 0,
     ) -> None:
         try:
+            if self.stop_requested:
+                return
             async with self.profile_semaphore:
+                if self.stop_requested:
+                    return
                 success = await self._parse_profile(owner_chat, user, source_channel_id)
                 if not success:
                     self._enqueue_profile_retry(user, source_channel_id, attempt + 1)
@@ -960,6 +1030,7 @@ class TelegramParserSystem:
             self.state.approved_set.discard(channel_id)
             self.state.stage2_processed_channels += 1
             self.state.pending_approval.pop(channel_id, None)
+            self._save_stage2_state()
             try:
                 entity = await self.user_client.get_entity(channel_id)
             except Exception:
@@ -981,6 +1052,7 @@ class TelegramParserSystem:
             await self._drain_candidate_retries(owner_chat)
             await self._drain_profile_retries(owner_chat)
         self.state.pending_approval.clear()
+        self._save_stage2_state()
         await self.finish(owner_chat)
 
     async def stop(self, owner_chat: int) -> None:
@@ -988,6 +1060,9 @@ class TelegramParserSystem:
             return
         logger.info("STOP REQUESTED")
         self.stop_requested = True
+        logger.info("STOP: cancelling %s tasks", len(self.pending_tasks))
+        for task in list(self.pending_tasks):
+            task.cancel()
         await self.bot_client.send_message(owner_chat, "⛔ Останавливаю...")
 
     async def progress_text(self) -> str:
@@ -1030,6 +1105,11 @@ class TelegramParserSystem:
                 self.pending_tasks.clear()
             if not self.state.retry_candidates and not self.state.retry_profiles:
                 break
+        await asyncio.sleep(1)
+        while self.pending_tasks:
+            await asyncio.gather(*list(self.pending_tasks), return_exceptions=True)
+            self.pending_tasks.clear()
+            await asyncio.sleep(0.5)
 
         await self._export_results(owner_chat)
         if self.stop_requested:
@@ -1038,6 +1118,7 @@ class TelegramParserSystem:
             await self.bot_client.send_message(owner_chat, "🏁 Парсинг завершён.")
         await self.bot_client.send_message(owner_chat, await self.progress_text())
         self.state.reset_runtime()
+        self._save_stage2_state()
 
 
 # =========================
@@ -1127,6 +1208,15 @@ async def main() -> None:
         text = (event.raw_text or "").strip()
         if text.startswith("/") or text in {"🚀 Старт", "⛔ Стоп", "📊 Прогресс"}:
             return
+        lowered = text.lower()
+        if any(word in lowered for word in ["старт", "stop", "стоп", "progress", "прогресс"]):
+            return
+        if any(emoji in text for emoji in ["🚀", "⛔", "📊", "✅", "❌"]):
+            return
+        if len(text) < 5:
+            return
+        if "t.me" not in lowered and "@" not in text:
+            return
 
         try:
             channel_limit, chat_limit, channels = parse_user_payload(text)
@@ -1173,6 +1263,8 @@ async def main() -> None:
                         del system.state.pending_approval[channel_id]
                         removed = True
                         break
+            if removed:
+                system._save_stage2_state()
             await event.answer("Пропущено" if removed else "Уже обработано")
         elif data == CALLBACK_STAGE2_YES:
             system.awaiting_stage2_confirmation = False
