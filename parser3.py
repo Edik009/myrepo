@@ -408,11 +408,11 @@ class TelegramParserSystem:
 
     async def _parse_profile_task(self, owner_chat: int, user: User) -> None:
         try:
-            await self._parse_profile(owner_chat, user)
+            async with self.profile_semaphore:
+                await self._parse_profile(owner_chat, user)
         finally:
             if user and user.id:
                 self.inflight_profiles.discard(user.id)
-            self.profile_semaphore.release()
 
     async def _flush_profile_batch(self, profile_tasks: List[asyncio.Task]) -> None:
         if not profile_tasks:
@@ -500,6 +500,8 @@ class TelegramParserSystem:
                         break
                     continue
                 seen_in_batch.add(sender_id)
+                if len(seen_in_batch) > 1000:
+                    seen_in_batch.clear()
 
             sender = await self._resolve_sender(msg)
             if isinstance(sender, User):
@@ -507,7 +509,6 @@ class TelegramParserSystem:
                 if getattr(sender, "bot", False) or is_deleted:
                     self.state.duplicate_profiles_skipped += 1
                 elif self._reserve_profile(sender.id):
-                    await self.profile_semaphore.acquire()
                     self.state.profiles_checked += 1
                     self.state.unique_profiles_processed += 1
                     if not getattr(sender, "username", None):
@@ -547,7 +548,6 @@ class TelegramParserSystem:
                 if getattr(sender, "bot", False) or is_deleted:
                     self.state.duplicate_profiles_skipped += 1
                 elif self._reserve_profile(sender.id):
-                    await self.profile_semaphore.acquire()
                     self.state.profiles_checked += 1
                     self.state.unique_profiles_processed += 1
                     if not getattr(sender, "username", None):
