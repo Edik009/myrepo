@@ -96,6 +96,7 @@ class SessionState:
     found_channels: Dict[str, FoundChannel] = field(default_factory=dict)
 
     pending_approval: Set[str] = field(default_factory=set)
+    processed_candidates: Set[str] = field(default_factory=set)
 
     last_resolve_ts: float = 0.0
 
@@ -111,6 +112,7 @@ class SessionState:
         self.visited_profiles.clear()
         self.found_channels.clear()
         self.pending_approval.clear()
+        self.processed_candidates.clear()
         self.last_resolve_ts = 0.0
 
 
@@ -262,21 +264,26 @@ class TelegramParserSystem:
         profile_url: Optional[str] = None,
     ) -> None:
         username = self._normalize_username(username)
+        if username in self.state.processed_candidates:
+            return
+
         if self._is_trash_username(username):
-            logger.info("CHANNEL SKIPPED username=%s reason=trash_filter", username)
+            self.state.processed_candidates.add(username)
             return
 
         # Канал уже был найден ранее: повторно не резолвим и не отправляем,
         # чтобы не спамить одной и той же ссылкой в боте.
         if username in self.state.found_channels:
-            logger.info("CHANNEL SKIPPED username=%s reason=already_discovered", username)
+            self.state.processed_candidates.add(username)
             return
 
         entity = await self._safe_resolve_entity(username)
         if not entity:
+            self.state.processed_candidates.add(username)
             return
 
         if not isinstance(entity, Channel):
+            self.state.processed_candidates.add(username)
             return
 
         subs = await self._safe_get_subs(entity)
@@ -309,6 +316,7 @@ class TelegramParserSystem:
                 username,
                 subs,
             )
+        self.state.processed_candidates.add(username)
 
     async def _parse_profile(self, owner_chat: int, user: User) -> None:
         if not user or not user.id:
