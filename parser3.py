@@ -251,6 +251,7 @@ class TelegramParserSystem:
         username: str,
         subs: int,
         source: str,
+        channel_id: Optional[int] = None,
         profile_url: Optional[str] = None,
     ) -> None:
         url = f"https://t.me/{username}"
@@ -270,13 +271,14 @@ class TelegramParserSystem:
                 f"Источник: {source}"
             )
 
+        callback_value = str(channel_id) if channel_id else username
         await self.bot_client.send_message(
             chat_id,
             text,
             buttons=[
                 [
-                    Button.inline("✅ Парсить потом", CALLBACK_PARSE + username.encode()),
-                    Button.inline("❌ Не парсить", CALLBACK_SKIP + username.encode()),
+                    Button.inline("✅ Парсить потом", CALLBACK_PARSE + callback_value.encode()),
+                    Button.inline("❌ Не парсить", CALLBACK_SKIP + callback_value.encode()),
                 ]
             ],
         )
@@ -348,6 +350,7 @@ class TelegramParserSystem:
                     normalized_username,
                     subs,
                     source,
+                    channel_id=channel_id,
                     profile_url=normalized_profile_url,
                 )
         else:
@@ -487,7 +490,6 @@ class TelegramParserSystem:
         processed = 0
         retry_messages: List[Message] = []
         retry_seen_ids: Set[int] = set()
-        seen_in_batch: Set[int] = set()
         no_new_profiles_streak = 0
         window_start_found_count = len(self.state.found_channels_all)
         try:
@@ -515,17 +517,6 @@ class TelegramParserSystem:
                     break
 
                 new_profile_in_message = False
-                sender_id = getattr(msg, "sender_id", None)
-                if sender_id:
-                    if sender_id in seen_in_batch:
-                        self.state.duplicate_profiles_skipped += 1
-                        no_new_profiles_streak += 1
-                        if no_new_profiles_streak >= 300 and processed > 300:
-                            break
-                        continue
-                    seen_in_batch.add(sender_id)
-                    if len(seen_in_batch) > 1000:
-                        seen_in_batch.clear()
 
                 sender = await self._resolve_sender(msg)
                 if isinstance(sender, User):
@@ -857,6 +848,7 @@ class TelegramParserSystem:
         else:
             await self.bot_client.send_message(owner_chat, "🏁 Парсинг завершён.")
         await self.bot_client.send_message(owner_chat, await self.progress_text())
+        self.state.reset_runtime()
 
 
 # =========================
@@ -972,16 +964,30 @@ async def main() -> None:
             return
         data = event.data or b""
         if data.startswith(CALLBACK_PARSE):
-            username = data.split(b":", 1)[1].decode().strip().lower()
-            if username in system.state.pending_approval.values():
-                system._queue_add(username, approved=True)
-            await event.answer("Добавлено в очередь этапа 2")
+            token = data.split(b":", 1)[1].decode(errors="ignore").strip().lower()
+            approved = False
+            if token.isdigit():
+                channel_id = int(token)
+                username = system.state.pending_approval.get(channel_id)
+                if username:
+                    system._queue_add(username, approved=True, channel_id=channel_id)
+                    approved = True
+            elif token:
+                system._queue_add(token, approved=True)
+                approved = True
+            await event.answer("Добавлено в очередь этапа 2" if approved else "Канал уже обработан")
         elif data.startswith(CALLBACK_SKIP):
-            username = data.split(b":", 1)[1].decode().strip().lower()
-            for channel_id, pending_username in list(system.state.pending_approval.items()):
-                if pending_username == username:
-                    del system.state.pending_approval[channel_id]
-            await event.answer("Пропущено")
+            token = data.split(b":", 1)[1].decode(errors="ignore").strip().lower()
+            removed = False
+            if token.isdigit():
+                removed = system.state.pending_approval.pop(int(token), None) is not None
+            elif token:
+                for channel_id, pending_username in list(system.state.pending_approval.items()):
+                    if pending_username == token:
+                        del system.state.pending_approval[channel_id]
+                        removed = True
+                        break
+            await event.answer("Пропущено" if removed else "Уже обработано")
         elif data == CALLBACK_STAGE2_YES:
             system.awaiting_stage2_confirmation = False
             system.state.queue.clear()
