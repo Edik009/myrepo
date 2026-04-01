@@ -478,80 +478,93 @@ class TelegramParserSystem:
         seen_in_batch: Set[int] = set()
         profile_tasks: List[asyncio.Task] = []
         no_new_profiles_streak = 0
+        try:
+            async for msg in self.user_client.iter_messages(entity, limit=None):
+                if not self.state.running or self.stop_requested:
+                    break
+                processed += 1
+                if source == "comment":
+                    self.state.chat_processed_current = processed
+                else:
+                    self.state.channel_processed_current = processed
+                if processed >= limit:
+                    break
+                if not isinstance(msg, Message):
+                    continue
 
-        async for msg in self.user_client.iter_messages(entity, limit=None):
-            if not self.state.running or self.stop_requested:
-                break
-            processed += 1
-            if source == "comment":
-                self.state.chat_processed_current = processed
-            else:
-                self.state.channel_processed_current = processed
-            if processed >= limit:
-                break
-            if not isinstance(msg, Message):
-                continue
+                self.state.message_count += 1
+                text = msg.raw_text or ""
 
-            self.state.message_count += 1
-            text = msg.raw_text or ""
-
-            for candidate in self._extract_candidates(text):
+                for candidate in self._extract_candidates(text):
+                    if self.stop_requested:
+                        break
+                    await self._process_candidate(owner_chat, candidate, source=source)
                 if self.stop_requested:
                     break
-                await self._process_candidate(owner_chat, candidate, source=source)
-            if self.stop_requested:
-                break
 
-            new_profile_in_message = False
-            sender_id = getattr(msg, "sender_id", None)
-            if sender_id:
-                if sender_id in seen_in_batch:
-                    self.state.duplicate_profiles_skipped += 1
+                new_profile_in_message = False
+                sender_id = getattr(msg, "sender_id", None)
+                if sender_id:
+                    if sender_id in seen_in_batch:
+                        self.state.duplicate_profiles_skipped += 1
+                        no_new_profiles_streak += 1
+                        if no_new_profiles_streak >= 100:
+                            break
+                        continue
+                    seen_in_batch.add(sender_id)
+                    if len(seen_in_batch) > 1000:
+                        seen_in_batch.clear()
+
+                sender = await self._resolve_sender(msg)
+                if isinstance(sender, User):
+                    is_deleted = bool(getattr(sender, "deleted", False))
+                    if getattr(sender, "bot", False) or is_deleted:
+                        self.state.duplicate_profiles_skipped += 1
+                    elif self._reserve_profile(sender.id):
+                        self.state.profiles_checked += 1
+                        self.state.unique_profiles_processed += 1
+                        if not getattr(sender, "username", None):
+                            self.state.profiles_without_username_processed += 1
+                        if self.stop_requested:
+                            break
+                        task = asyncio.create_task(self._parse_profile_task(owner_chat, sender))
+                        self._track_task(task)
+                        profile_tasks.append(task)
+                        new_profile_in_message = True
+                        if len(profile_tasks) >= PROFILE_BATCH_SIZE:
+                            await self._flush_profile_batch(profile_tasks)
+                else:
+                    handled = await self._handle_sender_entity(owner_chat, msg, sender)
+                    if not handled:
+                        msg_id = getattr(msg, "id", None)
+                        if msg_id and msg_id not in retry_seen_ids:
+                            retry_seen_ids.add(msg_id)
+                            retry_messages.append(msg)
+                            logger.info("PROFILE RETRY QUEUE ADD message_id=%s", msg_id)
+                        else:
+                            self.state.profiles_checked += 1
+                            self.state.profiles_failed += 1
+                            logger.info("PROFILE FAIL message_id=%s reason=sender_unavailable", msg.id)
+
+                if new_profile_in_message:
+                    no_new_profiles_streak = 0
+                else:
                     no_new_profiles_streak += 1
                     if no_new_profiles_streak >= 100:
                         break
-                    continue
-                seen_in_batch.add(sender_id)
-                if len(seen_in_batch) > 1000:
-                    seen_in_batch.clear()
-
-            sender = await self._resolve_sender(msg)
-            if isinstance(sender, User):
-                is_deleted = bool(getattr(sender, "deleted", False))
-                if getattr(sender, "bot", False) or is_deleted:
-                    self.state.duplicate_profiles_skipped += 1
-                elif self._reserve_profile(sender.id):
-                    self.state.profiles_checked += 1
-                    self.state.unique_profiles_processed += 1
-                    if not getattr(sender, "username", None):
-                        self.state.profiles_without_username_processed += 1
-                    if self.stop_requested:
-                        break
-                    task = asyncio.create_task(self._parse_profile_task(owner_chat, sender))
-                    self._track_task(task)
-                    profile_tasks.append(task)
-                    new_profile_in_message = True
-                    if len(profile_tasks) >= PROFILE_BATCH_SIZE:
-                        await self._flush_profile_batch(profile_tasks)
-            else:
-                handled = await self._handle_sender_entity(owner_chat, msg, sender)
-                if not handled:
-                    msg_id = getattr(msg, "id", None)
-                    if msg_id and msg_id not in retry_seen_ids:
-                        retry_seen_ids.add(msg_id)
-                        retry_messages.append(msg)
-                        logger.info("PROFILE RETRY QUEUE ADD message_id=%s", msg_id)
-                    else:
-                        self.state.profiles_checked += 1
-                        self.state.profiles_failed += 1
-                        logger.info("PROFILE FAIL message_id=%s reason=sender_unavailable", msg.id)
-
-            if new_profile_in_message:
-                no_new_profiles_streak = 0
-            else:
-                no_new_profiles_streak += 1
-                if no_new_profiles_streak >= 100:
-                    break
+        except ChannelPrivateError:
+            logger.info(
+                "MESSAGES SKIPPED private source=%s entity_id=%s",
+                source,
+                getattr(entity, "id", None),
+            )
+        except Exception as e:
+            logger.exception(
+                "MESSAGES PARSE FAILED source=%s entity_id=%s err=%s",
+                source,
+                getattr(entity, "id", None),
+                e,
+            )
 
         for msg in retry_messages:
             if not self.state.running or self.stop_requested:
