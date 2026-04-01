@@ -37,7 +37,6 @@ MAX_SUBS = 7000
 DELAY = 0.15
 RESOLVE_COOLDOWN_SECONDS = 0.08
 PROFILE_WORKERS = 18
-PROFILE_BATCH_SIZE = 20
 
 proxy = {
     "proxy_type": "http",
@@ -435,14 +434,6 @@ class TelegramParserSystem:
             if user and user.id:
                 self.inflight_profiles.discard((user.id, source_channel_id))
 
-    async def _flush_profile_batch(self, profile_tasks: Optional[List[asyncio.Task]] = None) -> None:
-        if profile_tasks is None:
-            return
-        if not profile_tasks:
-            return
-        await asyncio.gather(*profile_tasks, return_exceptions=True)
-        profile_tasks.clear()
-
     def _track_task(self, task: asyncio.Task) -> None:
         self.pending_tasks.add(task)
         task.add_done_callback(self.pending_tasks.discard)
@@ -497,7 +488,6 @@ class TelegramParserSystem:
         retry_messages: List[Message] = []
         retry_seen_ids: Set[int] = set()
         seen_in_batch: Set[int] = set()
-        profile_tasks: List[asyncio.Task] = []
         no_new_profiles_streak = 0
         window_start_found_count = len(self.state.found_channels_all)
         try:
@@ -551,10 +541,7 @@ class TelegramParserSystem:
                             break
                         task = asyncio.create_task(self._parse_profile_task(owner_chat, sender, source_channel_id))
                         self._track_task(task)
-                        profile_tasks.append(task)
                         new_profile_in_message = True
-                        if len(profile_tasks) >= PROFILE_BATCH_SIZE:
-                            await self._flush_profile_batch(profile_tasks)
                 else:
                     handled = await self._handle_sender_entity(owner_chat, msg, sender)
                     if not handled:
@@ -618,9 +605,6 @@ class TelegramParserSystem:
                         break
                     task = asyncio.create_task(self._parse_profile_task(owner_chat, sender, source_channel_id))
                     self._track_task(task)
-                    profile_tasks.append(task)
-                    if len(profile_tasks) >= PROFILE_BATCH_SIZE:
-                        await self._flush_profile_batch(profile_tasks)
                 continue
 
             handled = await self._handle_sender_entity(owner_chat, msg, sender)
@@ -628,8 +612,6 @@ class TelegramParserSystem:
                 self.state.profiles_checked += 1
                 self.state.profiles_failed += 1
                 logger.info("PROFILE FAIL message_id=%s reason=sender_unavailable_after_retry", msg_id)
-
-        await self._flush_profile_batch(profile_tasks)
 
     async def _parse_channel_entity(self, owner_chat: int, entity, source: str = "message") -> None:
         if self.stop_requested:
@@ -823,6 +805,7 @@ class TelegramParserSystem:
                 await self._parse_chat_entity(owner_chat, linked)
             if self.stop_requested:
                 break
+        self.state.pending_approval.clear()
         await self.finish(owner_chat)
 
     async def stop(self, owner_chat: int) -> None:
@@ -864,7 +847,6 @@ class TelegramParserSystem:
     async def finish(self, owner_chat: int) -> None:
         self.state.running = False
 
-        await self._flush_profile_batch()
         if self.pending_tasks:
             await asyncio.gather(*list(self.pending_tasks), return_exceptions=True)
             self.pending_tasks.clear()
