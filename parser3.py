@@ -151,7 +151,10 @@ class TelegramParserSystem:
 
     @staticmethod
     def _is_trash_username(username: str) -> bool:
-        return ("bot" in username.lower()) or (len(username) < 5)
+        lowered = username.lower()
+        if lowered.startswith("+") or lowered.startswith("joinchat"):
+            return True
+        return ("bot" in lowered) or (len(username) < 5)
 
     def _extract_candidates(self, text: Optional[str]) -> Set[str]:
         if not text:
@@ -177,6 +180,9 @@ class TelegramParserSystem:
             return None
         except (UsernameInvalidError, UsernameNotOccupiedError, InviteHashExpiredError):
             logger.info("QUEUE SKIP invalid username=%s", username)
+            return None
+        except ValueError:
+            logger.info("QUEUE SKIP unresolved username=%s", username)
             return None
         except Exception as e:
             logger.exception("Resolve failed username=%s err=%s", username, e)
@@ -258,6 +264,12 @@ class TelegramParserSystem:
         username = self._normalize_username(username)
         if self._is_trash_username(username):
             logger.info("CHANNEL SKIPPED username=%s reason=trash_filter", username)
+            return
+
+        # Канал уже был найден ранее: повторно не резолвим и не отправляем,
+        # чтобы не спамить одной и той же ссылкой в боте.
+        if username in self.state.found_channels:
+            logger.info("CHANNEL SKIPPED username=%s reason=already_discovered", username)
             return
 
         entity = await self._safe_resolve_entity(username)
