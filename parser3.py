@@ -191,6 +191,7 @@ class TelegramParserSystem:
         self.candidate_semaphore = asyncio.Semaphore(CANDIDATE_WORKERS)
         self.inflight_profiles: Set[Tuple[int, Optional[int]]] = set()
         self.resolving_now: Set[str] = set()
+        self.retrying_now: Set[str] = set()
         self.stop_requested = False
         self.pending_tasks: Set[asyncio.Task] = set()
         self.awaiting_stage2_confirmation = False
@@ -283,7 +284,7 @@ class TelegramParserSystem:
         username = self._normalize_username(username)
         if username in self.resolving_now:
             logger.info("RESOLVE SKIPPED duplicate username=%s", username)
-            return None
+            return "IN_PROGRESS"
         self.resolving_now.add(username)
         logger.info("RESOLVE username=%s", username)
         try:
@@ -395,13 +396,22 @@ class TelegramParserSystem:
         profile_url: Optional[str],
         attempt: int,
     ) -> None:
+        normalized = self._normalize_username(username)
+        if normalized in self.state.processed_usernames:
+            return
+        if normalized in self.retrying_now:
+            return
+        if len(self.state.retry_candidates) > 1000:
+            logger.warning("Retry queue overflow, skipping username=%s", normalized)
+            return
         if attempt > MAX_CANDIDATE_RETRIES:
             logger.info("CANDIDATE RETRY DROP username=%s reason=max_retries", username)
             return
-        wait_seconds = min(5.0, 2.0 + attempt)
+        wait_seconds = min(30.0, 5.0 * attempt)
+        self.retrying_now.add(normalized)
         self.state.retry_candidates.append(
             CandidateRetry(
-                username=self._normalize_username(username),
+                username=normalized,
                 source=source,
                 profile_url=profile_url,
                 attempt=attempt,
@@ -439,18 +449,22 @@ class TelegramParserSystem:
         profile_url: Optional[str],
         attempt: int = 0,
     ) -> None:
-        if self.stop_requested:
-            return
-        async with self.candidate_semaphore:
+        try:
             if self.stop_requested:
                 return
-            await self._process_candidate(
-                owner_chat=owner_chat,
-                username=username,
-                source=source,
-                profile_url=profile_url,
-                attempt=attempt,
-            )
+            async with self.candidate_semaphore:
+                if self.stop_requested:
+                    return
+                await self._process_candidate(
+                    owner_chat=owner_chat,
+                    username=username,
+                    source=source,
+                    profile_url=profile_url,
+                    attempt=attempt,
+                )
+        finally:
+            if attempt > 0:
+                self.retrying_now.discard(self._normalize_username(username))
 
     def _schedule_candidate_processing(
         self,
@@ -485,7 +499,11 @@ class TelegramParserSystem:
 
         if self._is_trash_username(username):
             return False
+        if username in self.state.processed_usernames and attempt > 0:
+            return False
         entity = await self._safe_resolve_entity(username)
+        if entity == "IN_PROGRESS":
+            return False
         if not entity:
             self._enqueue_candidate_retry(
                 username=username,
@@ -497,6 +515,7 @@ class TelegramParserSystem:
 
         if not isinstance(entity, Channel):
             return False
+        self.state.processed_usernames.add(username)
 
         subs = await self._safe_get_subs(entity)
         if subs <= 0:
@@ -1118,6 +1137,8 @@ class TelegramParserSystem:
             await self.bot_client.send_message(owner_chat, "🏁 Парсинг завершён.")
         await self.bot_client.send_message(owner_chat, await self.progress_text())
         self.state.reset_runtime()
+        self.resolving_now.clear()
+        self.retrying_now.clear()
         self._save_stage2_state()
 
 
