@@ -35,8 +35,8 @@ MAX_SUBS = 7000
 
 # Небольшая пауза между запросами. Слишком большое значение резко режет скорость.
 DELAY = 0.15
-RESOLVE_COOLDOWN_SECONDS = 0.3
-PROFILE_WORKERS = 8
+RESOLVE_COOLDOWN_SECONDS = 0.08
+PROFILE_WORKERS = 18
 PROFILE_BATCH_SIZE = 20
 
 proxy = {
@@ -108,6 +108,8 @@ class SessionState:
     found_channels_all: Dict[int, FoundChannel] = field(default_factory=dict)
     found_channels_filtered: Dict[int, FoundChannel] = field(default_factory=dict)
     processed_usernames: Set[str] = field(default_factory=set)
+    queue_set: Set[str] = field(default_factory=set)
+    queued_channel_ids: Set[int] = field(default_factory=set)
 
     pending_approval: Dict[int, str] = field(default_factory=dict)
     stage2_total_channels: int = 0
@@ -136,6 +138,8 @@ class SessionState:
         self.found_channels_all.clear()
         self.found_channels_filtered.clear()
         self.processed_usernames.clear()
+        self.queue_set.clear()
+        self.queued_channel_ids.clear()
         self.pending_approval.clear()
         self.stage2_total_channels = 0
         self.stage2_processed_channels = 0
@@ -276,12 +280,20 @@ class TelegramParserSystem:
             ],
         )
 
-    def _queue_add(self, username: str, approved: bool = False) -> None:
+    def _queue_add(self, username: str, approved: bool = False, channel_id: Optional[int] = None) -> None:
+        normalized = self._normalize_username(username)
+        if normalized in self.state.queue_set:
+            return
+        if channel_id and channel_id in self.state.queued_channel_ids:
+            return
+        self.state.queue_set.add(normalized)
+        if channel_id:
+            self.state.queued_channel_ids.add(channel_id)
         logger.info("QUEUE ADD username=%s approved=%s", username, approved)
         if approved:
-            self.state.approved_queue.append(username)
+            self.state.approved_queue.append(normalized)
         else:
-            self.state.queue.append(username)
+            self.state.queue.append(normalized)
 
     async def _process_candidate(
         self,
@@ -305,10 +317,9 @@ class TelegramParserSystem:
         channel_id = int(getattr(entity, "id", 0) or 0)
         normalized_username = self._normalize_username(getattr(entity, "username", None) or username)
         channel_url = f"https://t.me/{normalized_username}"
-        normalized_profile_url = profile_url or "unknown"
+        normalized_profile_url = profile_url or f"tg://user?id={owner_chat}"
 
-        if channel_id and channel_id not in self.state.visited_entities:
-            self._queue_add(normalized_username, approved=False)
+        self._queue_add(normalized_username, approved=False, channel_id=channel_id)
 
         is_new_channel = channel_id not in self.state.found_channels_all
         if is_new_channel:
@@ -512,7 +523,7 @@ class TelegramParserSystem:
                     if sender_id in seen_in_batch:
                         self.state.duplicate_profiles_skipped += 1
                         no_new_profiles_streak += 1
-                        if no_new_profiles_streak >= 100:
+                        if no_new_profiles_streak >= 300 and processed > 300:
                             break
                         continue
                     seen_in_batch.add(sender_id)
@@ -554,7 +565,7 @@ class TelegramParserSystem:
                     no_new_profiles_streak = 0
                 else:
                     no_new_profiles_streak += 1
-                    if no_new_profiles_streak >= 100:
+                    if no_new_profiles_streak >= 300 and processed > 300:
                         break
                 if source == "comment" and processed % 200 == 0:
                     new_channels_in_window = len(self.state.found_channels_all) - window_start_found_count
@@ -735,6 +746,7 @@ class TelegramParserSystem:
             if self.stop_requested:
                 break
             username = self.state.queue.pop()  # DFS
+            self.state.queue_set.discard(username)
             self.state.processed_usernames.add(username)
             entity = await self._safe_resolve_entity(username)
             if not entity:
@@ -787,6 +799,7 @@ class TelegramParserSystem:
             if self.stop_requested:
                 break
             username = self.state.approved_queue.pop()  # DFS
+            self.state.queue_set.discard(username)
             self.state.processed_usernames.add(username)
             self.state.stage2_processed_channels += 1
             entity = await self._safe_resolve_entity(username)
