@@ -217,7 +217,7 @@ class TelegramParserSystem:
         lowered = username.lower()
         if lowered.startswith("+") or lowered.startswith("joinchat"):
             return True
-        return "bot" in lowered
+        return lowered.endswith("bot")
 
     def _extract_candidates(self, text: Optional[str]) -> Set[str]:
         if not text:
@@ -1022,9 +1022,14 @@ class TelegramParserSystem:
     async def finish(self, owner_chat: int) -> None:
         self.state.running = False
 
-        if self.pending_tasks:
-            await asyncio.gather(*list(self.pending_tasks), return_exceptions=True)
-            self.pending_tasks.clear()
+        for _ in range(3):
+            await self._drain_candidate_retries(owner_chat)
+            await self._drain_profile_retries(owner_chat)
+            if self.pending_tasks:
+                await asyncio.gather(*list(self.pending_tasks), return_exceptions=True)
+                self.pending_tasks.clear()
+            if not self.state.retry_candidates and not self.state.retry_profiles:
+                break
 
         await self._export_results(owner_chat)
         if self.stop_requested:
