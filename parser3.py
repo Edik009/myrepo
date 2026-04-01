@@ -90,6 +90,7 @@ class SessionState:
     profiles_failed: int = 0
     unique_profiles_processed: int = 0
     duplicate_profiles_skipped: int = 0
+    profiles_without_username_processed: int = 0
     current_stage: str = "IDLE"
     channel_processed_current: int = 0
     chat_processed_current: int = 0
@@ -121,6 +122,7 @@ class SessionState:
         self.profiles_failed = 0
         self.unique_profiles_processed = 0
         self.duplicate_profiles_skipped = 0
+        self.profiles_without_username_processed = 0
         self.current_stage = "IDLE"
         self.channel_processed_current = 0
         self.chat_processed_current = 0
@@ -406,11 +408,11 @@ class TelegramParserSystem:
 
     async def _parse_profile_task(self, owner_chat: int, user: User) -> None:
         try:
-            async with self.profile_semaphore:
-                await self._parse_profile(owner_chat, user)
+            await self._parse_profile(owner_chat, user)
         finally:
             if user and user.id:
                 self.inflight_profiles.discard(user.id)
+            self.profile_semaphore.release()
 
     async def _flush_profile_batch(self, profile_tasks: List[asyncio.Task]) -> None:
         if not profile_tasks:
@@ -502,11 +504,14 @@ class TelegramParserSystem:
             sender = await self._resolve_sender(msg)
             if isinstance(sender, User):
                 is_deleted = bool(getattr(sender, "deleted", False))
-                if getattr(sender, "bot", False) or is_deleted or not getattr(sender, "username", None):
+                if getattr(sender, "bot", False) or is_deleted:
                     self.state.duplicate_profiles_skipped += 1
                 elif self._reserve_profile(sender.id):
+                    await self.profile_semaphore.acquire()
                     self.state.profiles_checked += 1
                     self.state.unique_profiles_processed += 1
+                    if not getattr(sender, "username", None):
+                        self.state.profiles_without_username_processed += 1
                     profile_tasks.append(asyncio.create_task(self._parse_profile_task(owner_chat, sender)))
                     new_profile_in_message = True
                     if len(profile_tasks) >= PROFILE_BATCH_SIZE:
@@ -539,11 +544,14 @@ class TelegramParserSystem:
             sender = await self._resolve_sender(msg)
             if isinstance(sender, User):
                 is_deleted = bool(getattr(sender, "deleted", False))
-                if getattr(sender, "bot", False) or is_deleted or not getattr(sender, "username", None):
+                if getattr(sender, "bot", False) or is_deleted:
                     self.state.duplicate_profiles_skipped += 1
                 elif self._reserve_profile(sender.id):
+                    await self.profile_semaphore.acquire()
                     self.state.profiles_checked += 1
                     self.state.unique_profiles_processed += 1
+                    if not getattr(sender, "username", None):
+                        self.state.profiles_without_username_processed += 1
                     profile_tasks.append(asyncio.create_task(self._parse_profile_task(owner_chat, sender)))
                     if len(profile_tasks) >= PROFILE_BATCH_SIZE:
                         await self._flush_profile_batch(profile_tasks)
@@ -675,7 +683,8 @@ class TelegramParserSystem:
             f"✅ Профили успешно: {self.state.profiles_success}\n"
             f"❌ Профили ошибок: {self.state.profiles_failed}\n"
             f"🆕 Уникальные профили: {self.state.unique_profiles_processed}\n"
-            f"♻️ Дубликаты пропущены: {self.state.duplicate_profiles_skipped}"
+            f"♻️ Дубликаты пропущены: {self.state.duplicate_profiles_skipped}\n"
+            f"🪪 Без username обработано: {self.state.profiles_without_username_processed}"
         )
 
     async def finish(self, owner_chat: int) -> None:
@@ -689,6 +698,7 @@ class TelegramParserSystem:
             "profiles_failed": self.state.profiles_failed,
             "unique_profiles_processed": self.state.unique_profiles_processed,
             "duplicate_profiles_skipped": self.state.duplicate_profiles_skipped,
+            "profiles_without_username_processed": self.state.profiles_without_username_processed,
             "channels": [
                 {
                     "username": c.username,
