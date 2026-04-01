@@ -438,6 +438,7 @@ class TelegramParserSystem:
                 await self._process_candidate(owner_chat, sender.username, source="comment")
             elif isinstance(sender, Channel):
                 logger.info("PROFILE SKIPPED reason=channel_sender_without_username id=%s", sender.id)
+                await self._parse_channel_entity(owner_chat, sender, source="anonymous_comment_channel")
             elif isinstance(sender, User):
                 await self._parse_profile(owner_chat, sender)
             else:
@@ -445,11 +446,7 @@ class TelegramParserSystem:
 
             await self._antiban_delay()
 
-    async def _parse_channel(self, owner_chat: int, username: str) -> None:
-        entity = await self._safe_resolve_entity(username)
-        if not entity:
-            return
-
+    async def _parse_channel_entity(self, owner_chat: int, entity, source: str = "message") -> None:
         ent_id = getattr(entity, "id", None)
         if ent_id and ent_id in self.state.visited_entities:
             logger.info("ENTITY id=%s depth=channel skipped=visited", ent_id)
@@ -459,9 +456,16 @@ class TelegramParserSystem:
             self.state.visited_entities.add(ent_id)
         logger.info("ENTITY id=%s depth=channel", ent_id)
 
-        await self._parse_messages(owner_chat, entity, self.state.channel_limit, source="message")
+        await self._parse_messages(owner_chat, entity, self.state.channel_limit, source=source)
 
         linked_chat_id = getattr(entity, "linked_chat_id", None)
+        if not linked_chat_id:
+            try:
+                full = await self.user_client(GetFullChannelRequest(entity))
+                linked_chat_id = getattr(full.full_chat, "linked_chat_id", None)
+            except Exception:
+                linked_chat_id = None
+
         if linked_chat_id:
             try:
                 linked = await self.user_client.get_entity(linked_chat_id)
@@ -471,7 +475,13 @@ class TelegramParserSystem:
                     logger.info("ENTITY id=%s depth=chat", linked_id)
                     await self._parse_messages(owner_chat, linked, self.state.chat_limit, source="comment")
             except Exception as e:
-                logger.exception("Failed linked chat parsing username=%s err=%s", username, e)
+                logger.exception("Failed linked chat parsing entity_id=%s err=%s", ent_id, e)
+
+    async def _parse_channel(self, owner_chat: int, username: str) -> None:
+        entity = await self._safe_resolve_entity(username)
+        if not entity:
+            return
+        await self._parse_channel_entity(owner_chat, entity, source="message")
 
     async def run(self, owner_chat: int) -> None:
         self.state.running = True
