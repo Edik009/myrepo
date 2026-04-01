@@ -1,5 +1,4 @@
 import asyncio
-import json
 import logging
 import os
 import re
@@ -36,10 +35,9 @@ MAX_SUBS = 7000
 
 # Небольшая пауза между запросами. Слишком большое значение резко режет скорость.
 DELAY = 0.15
-RESOLVE_COOLDOWN_SECONDS = 0.3
-PROFILE_WORKERS = 8
+RESOLVE_COOLDOWN_SECONDS = 0.08
+PROFILE_WORKERS = 18
 PROFILE_BATCH_SIZE = 20
-CANDIDATE_RETRY_TTL_SECONDS = 300.0
 
 proxy = {
     "proxy_type": "http",
@@ -51,6 +49,8 @@ proxy = {
 
 CALLBACK_PARSE = b"parse_yes:"
 CALLBACK_SKIP = b"parse_no:"
+CALLBACK_STAGE2_YES = b"stage2_yes"
+CALLBACK_STAGE2_NO = b"stage2_no"
 
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
 
@@ -70,11 +70,12 @@ logger = logging.getLogger("telegram_parser")
 # =========================
 @dataclass
 class FoundChannel:
+    channel_id: int
     username: str
     url: str
     subs: int
     source: str
-    profile_url: Optional[str] = None
+    profile_url: str = ""
 
 
 @dataclass
@@ -101,14 +102,19 @@ class SessionState:
     queue: Deque[str] = field(default_factory=deque)
     approved_queue: Deque[str] = field(default_factory=deque)
 
-    seen_channels: Set[str] = field(default_factory=set)
     visited_entities: Set[int] = field(default_factory=set)
-    visited_profiles: Set[int] = field(default_factory=set)
+    visited_profiles: Set[Tuple[int, Optional[int]]] = field(default_factory=set)
 
-    found_channels: Dict[str, FoundChannel] = field(default_factory=dict)
+    found_channels_all: Dict[int, FoundChannel] = field(default_factory=dict)
+    found_channels_filtered: Dict[int, FoundChannel] = field(default_factory=dict)
+    processed_usernames: Set[str] = field(default_factory=set)
+    queue_set: Set[str] = field(default_factory=set)
+    queued_channel_ids: Set[int] = field(default_factory=set)
+    approved_set: Set[str] = field(default_factory=set)
 
-    pending_approval: Set[str] = field(default_factory=set)
-    processed_candidates: Dict[str, float] = field(default_factory=dict)
+    pending_approval: Dict[int, str] = field(default_factory=dict)
+    stage2_total_channels: int = 0
+    stage2_processed_channels: int = 0
 
     last_resolve_ts: float = 0.0
 
@@ -128,12 +134,17 @@ class SessionState:
         self.chat_processed_current = 0
         self.queue.clear()
         self.approved_queue.clear()
-        self.seen_channels.clear()
         self.visited_entities.clear()
         self.visited_profiles.clear()
-        self.found_channels.clear()
+        self.found_channels_all.clear()
+        self.found_channels_filtered.clear()
+        self.processed_usernames.clear()
+        self.queue_set.clear()
+        self.queued_channel_ids.clear()
+        self.approved_set.clear()
         self.pending_approval.clear()
-        self.processed_candidates.clear()
+        self.stage2_total_channels = 0
+        self.stage2_processed_channels = 0
         self.last_resolve_ts = 0.0
 
 
@@ -149,7 +160,10 @@ class TelegramParserSystem:
         self.bot_client = bot_client
         self.state = SessionState()
         self.profile_semaphore = asyncio.Semaphore(PROFILE_WORKERS)
-        self.inflight_profiles: Set[int] = set()
+        self.inflight_profiles: Set[Tuple[int, Optional[int]]] = set()
+        self.stop_requested = False
+        self.pending_tasks: Set[asyncio.Task] = set()
+        self.awaiting_stage2_confirmation = False
 
     # ---------- Utility ----------
     async def _antiban_delay(self) -> None:
@@ -179,7 +193,7 @@ class TelegramParserSystem:
         lowered = username.lower()
         if lowered.startswith("+") or lowered.startswith("joinchat"):
             return True
-        return ("bot" in lowered) or (len(username) < 5)
+        return "bot" in lowered
 
     def _extract_candidates(self, text: Optional[str]) -> Set[str]:
         if not text:
@@ -268,16 +282,23 @@ class TelegramParserSystem:
             ],
         )
 
-    def _queue_add(self, username: str, approved: bool = False) -> None:
-        if username in self.state.seen_channels:
-            logger.info("QUEUE SKIP username=%s reason=seen", username)
+    def _queue_add(self, username: str, approved: bool = False, channel_id: Optional[int] = None) -> None:
+        normalized = self._normalize_username(username)
+        if approved and normalized in self.state.approved_set:
             return
+        if normalized in self.state.queue_set:
+            return
+        if channel_id and channel_id in self.state.queued_channel_ids:
+            return
+        self.state.queue_set.add(normalized)
+        if channel_id:
+            self.state.queued_channel_ids.add(channel_id)
         logger.info("QUEUE ADD username=%s approved=%s", username, approved)
-        self.state.seen_channels.add(username)
         if approved:
-            self.state.approved_queue.append(username)
+            self.state.approved_set.add(normalized)
+            self.state.approved_queue.append(normalized)
         else:
-            self.state.queue.append(username)
+            self.state.queue.append(normalized)
 
     async def _process_candidate(
         self,
@@ -285,61 +306,60 @@ class TelegramParserSystem:
         username: str,
         source: str,
         profile_url: Optional[str] = None,
-    ) -> None:
+    ) -> bool:
         username = self._normalize_username(username)
-        now = time.time()
-        last_attempt_ts = self.state.processed_candidates.get(username)
-        if last_attempt_ts and (now - last_attempt_ts) < CANDIDATE_RETRY_TTL_SECONDS:
-            return
 
         if self._is_trash_username(username):
-            return
-
-        # Канал уже был найден ранее: повторно не резолвим и не отправляем,
-        # чтобы не спамить одной и той же ссылкой в боте.
-        if username in self.state.found_channels:
-            return
-
-        self.state.processed_candidates[username] = now
+            return False
         entity = await self._safe_resolve_entity(username)
         if not entity:
-            return
+            return False
 
         if not isinstance(entity, Channel):
-            return
+            return False
 
         subs = await self._safe_get_subs(entity)
-        channel_url = f"https://t.me/{username}"
+        if subs <= 0:
+            return False
+        channel_id = int(getattr(entity, "id", 0) or 0)
+        normalized_username = self._normalize_username(getattr(entity, "username", None) or username)
+        channel_url = f"https://t.me/{normalized_username}"
+        normalized_profile_url = profile_url or ""
 
-        self._queue_add(username, approved=False)
+        self._queue_add(normalized_username, approved=False, channel_id=channel_id)
 
-        if username not in self.state.found_channels:
-            self.state.found_channels[username] = FoundChannel(
-                username=username,
+        is_new_channel = channel_id not in self.state.found_channels_all
+        if is_new_channel:
+            self.state.found_channels_all[channel_id] = FoundChannel(
+                channel_id=channel_id,
+                username=normalized_username,
                 url=channel_url,
                 subs=subs,
                 source=source,
-                profile_url=profile_url,
+                profile_url=normalized_profile_url,
             )
 
         if MIN_SUBS <= subs <= MAX_SUBS:
-            self.state.found_count += 1
-            self.state.pending_approval.add(username)
-            await self._send_found_channel(
-                owner_chat,
-                username,
-                subs,
-                source,
-                profile_url=profile_url,
-            )
+            if channel_id not in self.state.found_channels_filtered:
+                self.state.found_channels_filtered[channel_id] = self.state.found_channels_all[channel_id]
+                self.state.found_count = len(self.state.found_channels_filtered)
+                self.state.pending_approval[channel_id] = normalized_username
+                await self._send_found_channel(
+                    owner_chat,
+                    normalized_username,
+                    subs,
+                    source,
+                    profile_url=normalized_profile_url,
+                )
         else:
             logger.info(
                 "CHANNEL SKIPPED username=%s reason=subs_filter_only_for_send subs=%s",
-                username,
+                normalized_username,
                 subs,
             )
+        return is_new_channel
 
-    async def _parse_profile(self, owner_chat: int, user: User) -> None:
+    async def _parse_profile(self, owner_chat: int, user: User, source_channel_id: Optional[int]) -> None:
         if not user or not user.id:
             logger.info("PROFILE SKIPPED reason=invalid_user")
             return
@@ -372,7 +392,7 @@ class TelegramParserSystem:
                     self.state.profiles_failed += 1
                     return
 
-        self.state.visited_profiles.add(user.id)
+        self.state.visited_profiles.add((user.id, source_channel_id))
         self.state.profiles_success += 1
         logger.info("PROFILE SUCCESS user_id=%s", user.id)
         logger.info("ENTITY id=%s depth=profile", user.id)
@@ -399,26 +419,33 @@ class TelegramParserSystem:
                 logger.exception("Attached channel resolve failed user_id=%s err=%s", user.id, e)
 
 
-    def _reserve_profile(self, user_id: int) -> bool:
-        if user_id in self.state.visited_profiles or user_id in self.inflight_profiles:
+    def _reserve_profile(self, user_id: int, source_channel_id: Optional[int]) -> bool:
+        profile_key = (user_id, source_channel_id)
+        if profile_key in self.state.visited_profiles or profile_key in self.inflight_profiles:
             self.state.duplicate_profiles_skipped += 1
             return False
-        self.inflight_profiles.add(user_id)
+        self.inflight_profiles.add(profile_key)
         return True
 
-    async def _parse_profile_task(self, owner_chat: int, user: User) -> None:
+    async def _parse_profile_task(self, owner_chat: int, user: User, source_channel_id: Optional[int]) -> None:
         try:
             async with self.profile_semaphore:
-                await self._parse_profile(owner_chat, user)
+                await self._parse_profile(owner_chat, user, source_channel_id)
         finally:
             if user and user.id:
-                self.inflight_profiles.discard(user.id)
+                self.inflight_profiles.discard((user.id, source_channel_id))
 
-    async def _flush_profile_batch(self, profile_tasks: List[asyncio.Task]) -> None:
+    async def _flush_profile_batch(self, profile_tasks: Optional[List[asyncio.Task]] = None) -> None:
+        if profile_tasks is None:
+            return
         if not profile_tasks:
             return
         await asyncio.gather(*profile_tasks, return_exceptions=True)
         profile_tasks.clear()
+
+    def _track_task(self, task: asyncio.Task) -> None:
+        self.pending_tasks.add(task)
+        task.add_done_callback(self.pending_tasks.discard)
 
     async def _resolve_sender(self, msg: Message):
         sender = None
@@ -453,7 +480,8 @@ class TelegramParserSystem:
 
     async def _handle_sender_entity(self, owner_chat: int, msg: Message, sender) -> bool:
         if isinstance(sender, Channel) and sender.username:
-            await self._process_candidate(owner_chat, sender.username, source="comment")
+            sender_profile_url = f"tg://user?id={getattr(msg, 'sender_id', 0)}"
+            await self._process_candidate(owner_chat, sender.username, source="comment", profile_url=sender_profile_url)
             return True
         if isinstance(sender, Channel):
             logger.info("PROFILE SKIPPED reason=channel_sender_without_username id=%s", sender.id)
@@ -464,81 +492,115 @@ class TelegramParserSystem:
         return False
 
     async def _parse_messages(self, owner_chat: int, entity, limit: int, source: str) -> None:
+        source_channel_id = getattr(entity, "id", None)
         processed = 0
         retry_messages: List[Message] = []
         retry_seen_ids: Set[int] = set()
         seen_in_batch: Set[int] = set()
         profile_tasks: List[asyncio.Task] = []
         no_new_profiles_streak = 0
-
-        async for msg in self.user_client.iter_messages(entity, limit=None):
-            if not self.state.running:
-                break
-            processed += 1
-            if source == "comment":
-                self.state.chat_processed_current = processed
-            else:
-                self.state.channel_processed_current = processed
-            if processed >= limit:
-                break
-            if not isinstance(msg, Message):
-                continue
-
-            self.state.message_count += 1
-            text = msg.raw_text or ""
-
-            for candidate in self._extract_candidates(text):
-                await self._process_candidate(owner_chat, candidate, source=source)
-
-            new_profile_in_message = False
-            sender_id = getattr(msg, "sender_id", None)
-            if sender_id:
-                if sender_id in seen_in_batch:
-                    self.state.duplicate_profiles_skipped += 1
-                    no_new_profiles_streak += 1
-                    if no_new_profiles_streak >= 100:
-                        break
+        window_start_found_count = len(self.state.found_channels_all)
+        try:
+            async for msg in self.user_client.iter_messages(entity, limit=None):
+                if not self.state.running or self.stop_requested:
+                    break
+                processed += 1
+                if source == "comment":
+                    self.state.chat_processed_current = processed
+                else:
+                    self.state.channel_processed_current = processed
+                if processed >= limit:
+                    break
+                if not isinstance(msg, Message):
                     continue
-                seen_in_batch.add(sender_id)
-                if len(seen_in_batch) > 1000:
-                    seen_in_batch.clear()
 
-            sender = await self._resolve_sender(msg)
-            if isinstance(sender, User):
-                is_deleted = bool(getattr(sender, "deleted", False))
-                if getattr(sender, "bot", False) or is_deleted:
-                    self.state.duplicate_profiles_skipped += 1
-                elif self._reserve_profile(sender.id):
-                    self.state.profiles_checked += 1
-                    self.state.unique_profiles_processed += 1
-                    if not getattr(sender, "username", None):
-                        self.state.profiles_without_username_processed += 1
-                    profile_tasks.append(asyncio.create_task(self._parse_profile_task(owner_chat, sender)))
-                    new_profile_in_message = True
-                    if len(profile_tasks) >= PROFILE_BATCH_SIZE:
-                        await self._flush_profile_batch(profile_tasks)
-            else:
-                handled = await self._handle_sender_entity(owner_chat, msg, sender)
-                if not handled:
-                    msg_id = getattr(msg, "id", None)
-                    if msg_id and msg_id not in retry_seen_ids:
-                        retry_seen_ids.add(msg_id)
-                        retry_messages.append(msg)
-                        logger.info("PROFILE RETRY QUEUE ADD message_id=%s", msg_id)
-                    else:
-                        self.state.profiles_checked += 1
-                        self.state.profiles_failed += 1
-                        logger.info("PROFILE FAIL message_id=%s reason=sender_unavailable", msg.id)
+                self.state.message_count += 1
+                text = msg.raw_text or ""
 
-            if new_profile_in_message:
-                no_new_profiles_streak = 0
-            else:
-                no_new_profiles_streak += 1
-                if no_new_profiles_streak >= 100:
+                for candidate in self._extract_candidates(text):
+                    if self.stop_requested:
+                        break
+                    await self._process_candidate(owner_chat, candidate, source=source)
+                if self.stop_requested:
                     break
 
+                new_profile_in_message = False
+                sender_id = getattr(msg, "sender_id", None)
+                if sender_id:
+                    if sender_id in seen_in_batch:
+                        self.state.duplicate_profiles_skipped += 1
+                        no_new_profiles_streak += 1
+                        if no_new_profiles_streak >= 300 and processed > 300:
+                            break
+                        continue
+                    seen_in_batch.add(sender_id)
+                    if len(seen_in_batch) > 1000:
+                        seen_in_batch.clear()
+
+                sender = await self._resolve_sender(msg)
+                if isinstance(sender, User):
+                    is_deleted = bool(getattr(sender, "deleted", False))
+                    if getattr(sender, "bot", False) or is_deleted:
+                        self.state.duplicate_profiles_skipped += 1
+                    elif self._reserve_profile(sender.id, source_channel_id):
+                        self.state.profiles_checked += 1
+                        self.state.unique_profiles_processed += 1
+                        if not getattr(sender, "username", None):
+                            self.state.profiles_without_username_processed += 1
+                        if self.stop_requested:
+                            break
+                        task = asyncio.create_task(self._parse_profile_task(owner_chat, sender, source_channel_id))
+                        self._track_task(task)
+                        profile_tasks.append(task)
+                        new_profile_in_message = True
+                        if len(profile_tasks) >= PROFILE_BATCH_SIZE:
+                            await self._flush_profile_batch(profile_tasks)
+                else:
+                    handled = await self._handle_sender_entity(owner_chat, msg, sender)
+                    if not handled:
+                        msg_id = getattr(msg, "id", None)
+                        if msg_id and msg_id not in retry_seen_ids:
+                            retry_seen_ids.add(msg_id)
+                            retry_messages.append(msg)
+                            logger.info("PROFILE RETRY QUEUE ADD message_id=%s", msg_id)
+                        else:
+                            self.state.profiles_checked += 1
+                            self.state.profiles_failed += 1
+                            logger.info("PROFILE FAIL message_id=%s reason=sender_unavailable", msg.id)
+
+                if new_profile_in_message:
+                    no_new_profiles_streak = 0
+                else:
+                    no_new_profiles_streak += 1
+                    if no_new_profiles_streak >= 300 and processed > 300:
+                        break
+                if source == "comment" and processed % 200 == 0:
+                    new_channels_in_window = len(self.state.found_channels_all) - window_start_found_count
+                    if new_channels_in_window < 2:
+                        logger.info(
+                            "CHAT EARLY EXIT entity_id=%s processed=%s new_channels=%s",
+                            source_channel_id,
+                            processed,
+                            new_channels_in_window,
+                        )
+                        break
+                    window_start_found_count = len(self.state.found_channels_all)
+        except ChannelPrivateError:
+            logger.info(
+                "MESSAGES SKIPPED private source=%s entity_id=%s",
+                source,
+                getattr(entity, "id", None),
+            )
+        except Exception as e:
+            logger.exception(
+                "MESSAGES PARSE FAILED source=%s entity_id=%s err=%s",
+                source,
+                getattr(entity, "id", None),
+                e,
+            )
+
         for msg in retry_messages:
-            if not self.state.running:
+            if not self.state.running or self.stop_requested:
                 break
             msg_id = getattr(msg, "id", None)
             logger.info("PROFILE RETRY QUEUE PROCESS message_id=%s", msg_id)
@@ -547,12 +609,16 @@ class TelegramParserSystem:
                 is_deleted = bool(getattr(sender, "deleted", False))
                 if getattr(sender, "bot", False) or is_deleted:
                     self.state.duplicate_profiles_skipped += 1
-                elif self._reserve_profile(sender.id):
+                elif self._reserve_profile(sender.id, source_channel_id):
                     self.state.profiles_checked += 1
                     self.state.unique_profiles_processed += 1
                     if not getattr(sender, "username", None):
                         self.state.profiles_without_username_processed += 1
-                    profile_tasks.append(asyncio.create_task(self._parse_profile_task(owner_chat, sender)))
+                    if self.stop_requested:
+                        break
+                    task = asyncio.create_task(self._parse_profile_task(owner_chat, sender, source_channel_id))
+                    self._track_task(task)
+                    profile_tasks.append(task)
                     if len(profile_tasks) >= PROFILE_BATCH_SIZE:
                         await self._flush_profile_batch(profile_tasks)
                 continue
@@ -566,6 +632,8 @@ class TelegramParserSystem:
         await self._flush_profile_batch(profile_tasks)
 
     async def _parse_channel_entity(self, owner_chat: int, entity, source: str = "message") -> None:
+        if self.stop_requested:
+            return
         ent_id = getattr(entity, "id", None)
         if ent_id and ent_id in self.state.visited_entities:
             logger.info("ENTITY id=%s depth=channel skipped=visited", ent_id)
@@ -594,6 +662,8 @@ class TelegramParserSystem:
             return None
 
     async def _parse_chat_entity(self, owner_chat: int, entity) -> None:
+        if self.stop_requested:
+            return
         ent_id = getattr(entity, "id", None)
         if ent_id and ent_id in self.state.visited_entities:
             logger.info("ENTITY id=%s depth=chat skipped=visited", ent_id)
@@ -606,72 +676,175 @@ class TelegramParserSystem:
         await self._parse_messages(owner_chat, entity, self.state.chat_limit, source="comment")
 
     async def _parse_channel(self, owner_chat: int, username: str) -> None:
+        if self.stop_requested:
+            return
         entity = await self._safe_resolve_entity(username)
         if not entity:
             return
         await self._parse_channel_entity(owner_chat, entity, source="message")
 
+    @staticmethod
+    def _format_url_list(usernames: List[str]) -> List[str]:
+        return [f"{i}. https://t.me/{username}" for i, username in enumerate(usernames, start=1)]
+
+    async def _export_results(self, owner_chat: int) -> None:
+        logger.info("EXPORT START")
+
+        found_filtered_sorted = sorted(
+            self.state.found_channels_filtered.values(),
+            key=lambda ch: (-int(ch.subs or 0), ch.username),
+        )
+        found_all_sorted = sorted(
+            self.state.found_channels_all.values(),
+            key=lambda ch: (-int(ch.subs or 0), ch.username),
+        )
+
+        remaining_candidates = list(self.state.queue) + list(self.state.approved_queue) + list(self.state.pending_approval.values())
+        remaining_usernames: List[str] = []
+        remaining_seen: Set[str] = set()
+        for username in remaining_candidates:
+            normalized = self._normalize_username(username)
+            if normalized in self.state.processed_usernames:
+                continue
+            if normalized in remaining_seen:
+                continue
+            remaining_seen.add(normalized)
+            remaining_usernames.append(normalized)
+
+        result_file = "result.txt"
+        lines: List[str] = []
+        lines.append("===== НАЙДЕННЫЕ КАНАЛЫ (300–7000) =====")
+        lines.append("")
+        lines.extend(self._format_url_list([c.username for c in found_filtered_sorted]))
+        lines.append("")
+        lines.append(f"Всего: {len(found_filtered_sorted)}")
+        lines.append("")
+        lines.append("")
+        lines.append("===== ВСЕ НАЙДЕННЫЕ КАНАЛЫ (БЕЗ ФИЛЬТРА) =====")
+        lines.append("")
+        for i, channel in enumerate(found_all_sorted, start=1):
+            lines.append(f"{i}. {channel.url} (subs: {channel.subs})")
+        lines.append("")
+        lines.append(f"Всего: {len(found_all_sorted)}")
+        lines.append("")
+        lines.append("")
+        lines.append("===== НЕ ОБРАБОТАННЫЕ КАНАЛЫ =====")
+        lines.append("")
+        lines.extend(self._format_url_list(remaining_usernames))
+        lines.append("")
+        lines.append(f"Всего: {len(remaining_usernames)}")
+        lines.append("")
+
+        with open(result_file, "w", encoding="utf-8") as f:
+            f.write("\n".join(lines))
+
+        logger.info("EXPORT DONE")
+        await self.bot_client.send_file(owner_chat, result_file, caption="📄 Результаты на момент остановки")
+        logger.info("FILE SENT")
+
     async def run(self, owner_chat: int) -> None:
         self.state.running = True
+        self.stop_requested = False
         self.state.started_at = time.time()
 
         await self.bot_client.send_message(owner_chat, "🚀 Парсинг запущен. Этап 1: стартовые каналы.")
 
         while self.state.queue and self.state.running:
+            if self.stop_requested:
+                break
             username = self.state.queue.pop()  # DFS
+            self.state.queue_set.discard(username)
+            self.state.processed_usernames.add(username)
             entity = await self._safe_resolve_entity(username)
             if not entity:
                 continue
             await self._parse_channel_entity(owner_chat, entity, source="message")
+            if self.stop_requested:
+                break
             linked = await self._resolve_linked_chat(entity)
             if linked:
                 await self._parse_chat_entity(owner_chat, linked)
+            if self.stop_requested:
+                break
 
-        if not self.state.running:
-            return
-
-        await self.bot_client.send_message(
-            owner_chat,
-            "✅ Этап 1 завершён.\n"
-            "Теперь доступны каналы, отмеченные кнопкой '✅ Парсить потом'.\n"
-            "Если хотите продолжить — нажимайте на кнопки у найденных каналов.",
-        )
-
-        while self.state.approved_queue and self.state.running:
-            username = self.state.approved_queue.pop()  # DFS for approved
-            entity = await self._safe_resolve_entity(username)
-            if not entity:
-                continue
-            await self._parse_channel_entity(owner_chat, entity, source="message")
-            linked = await self._resolve_linked_chat(entity)
-            if linked:
-                await self._parse_chat_entity(owner_chat, linked)
+        if not self.stop_requested:
+            if self.state.approved_queue:
+                self.awaiting_stage2_confirmation = True
+                self.state.running = False
+                await self.bot_client.send_message(
+                    owner_chat,
+                    "Этап 1 завершён.\nПродолжить парсинг выбранных каналов?",
+                    buttons=[
+                        [Button.inline("✅ Да", CALLBACK_STAGE2_YES), Button.inline("❌ Нет", CALLBACK_STAGE2_NO)]
+                    ],
+                )
+                return
+            await self.bot_client.send_message(owner_chat, "✅ Этап 1 завершён. Выбранных каналов для этапа 2 нет.")
 
         await self.finish(owner_chat)
 
     async def run_approved_only(self, owner_chat: int) -> None:
         self.state.running = True
+        self.stop_requested = False
+        self.state.visited_entities.clear()
+        self.state.queue_set.clear()
+        self.state.queued_channel_ids.clear()
+        self.state.message_count = 0
+        self.state.profiles_checked = 0
+        self.state.profiles_success = 0
+        self.state.profiles_failed = 0
+        self.state.duplicate_profiles_skipped = 0
+        self.state.unique_profiles_processed = 0
+        self.state.channel_processed_current = 0
+        self.state.chat_processed_current = 0
+        self.state.current_stage = "STAGE 2"
+        self.state.stage2_total_channels = len(self.state.approved_queue)
+        self.state.stage2_processed_channels = 0
         if not self.state.started_at:
             self.state.started_at = time.time()
 
         await self.bot_client.send_message(owner_chat, "🚀 Этап 2 запущен: парсинг одобренных каналов.")
         while self.state.approved_queue and self.state.running:
+            if self.stop_requested:
+                break
             username = self.state.approved_queue.pop()  # DFS
+            self.state.approved_set.discard(username)
+            self.state.queue_set.discard(username)
+            self.state.processed_usernames.add(username)
+            self.state.stage2_processed_channels += 1
             entity = await self._safe_resolve_entity(username)
             if not entity:
                 continue
             await self._parse_channel_entity(owner_chat, entity, source="message")
+            if self.stop_requested:
+                break
             linked = await self._resolve_linked_chat(entity)
             if linked:
                 await self._parse_chat_entity(owner_chat, linked)
+            if self.stop_requested:
+                break
         await self.finish(owner_chat)
 
     async def stop(self, owner_chat: int) -> None:
-        self.state.running = False
-        await self.bot_client.send_message(owner_chat, "⛔ Остановлено пользователем.")
+        if self.stop_requested:
+            return
+        logger.info("STOP REQUESTED")
+        self.stop_requested = True
+        await self.bot_client.send_message(owner_chat, "⛔ Останавливаю...")
 
     async def progress_text(self) -> str:
         elapsed = int(time.time() - self.state.started_at) if self.state.started_at else 0
+        stage2_extra = ""
+        if self.state.current_stage == "STAGE 2":
+            total = self.state.stage2_total_channels
+            processed = self.state.stage2_processed_channels
+            left = max(0, total - processed)
+            stage2_extra = (
+                "\n\n📊 ЭТАП 2\n"
+                f"Каналов в очереди: {total}\n"
+                f"Обработано: {processed}\n"
+                f"Осталось: {left}"
+            )
         return (
             f"⏱ Время: {elapsed} сек\n"
             f"📨 Сообщений: {self.state.message_count}\n"
@@ -685,39 +858,23 @@ class TelegramParserSystem:
             f"🆕 Уникальные профили: {self.state.unique_profiles_processed}\n"
             f"♻️ Дубликаты пропущены: {self.state.duplicate_profiles_skipped}\n"
             f"🪪 Без username обработано: {self.state.profiles_without_username_processed}"
+            f"{stage2_extra}"
         )
 
     async def finish(self, owner_chat: int) -> None:
         self.state.running = False
 
-        payload = {
-            "processed": self.state.message_count,
-            "found": self.state.found_count,
-            "profiles_checked": self.state.profiles_checked,
-            "profiles_success": self.state.profiles_success,
-            "profiles_failed": self.state.profiles_failed,
-            "unique_profiles_processed": self.state.unique_profiles_processed,
-            "duplicate_profiles_skipped": self.state.duplicate_profiles_skipped,
-            "profiles_without_username_processed": self.state.profiles_without_username_processed,
-            "channels": [
-                {
-                    "username": c.username,
-                    "url": c.url,
-                    "subs": c.subs,
-                    "source": c.source,
-                    "profile_url": c.profile_url,
-                }
-                for c in self.state.found_channels.values()
-            ],
-        }
+        await self._flush_profile_batch()
+        if self.pending_tasks:
+            await asyncio.gather(*list(self.pending_tasks), return_exceptions=True)
+            self.pending_tasks.clear()
 
-        result_file = "parser3_results.json"
-        with open(result_file, "w", encoding="utf-8") as f:
-            json.dump(payload, f, ensure_ascii=False, indent=2)
-
-        await self.bot_client.send_message(owner_chat, "🏁 Парсинг завершён.")
+        await self._export_results(owner_chat)
+        if self.stop_requested:
+            await self.bot_client.send_message(owner_chat, "⛔ Парсинг корректно остановлен.")
+        else:
+            await self.bot_client.send_message(owner_chat, "🏁 Парсинг завершён.")
         await self.bot_client.send_message(owner_chat, await self.progress_text())
-        await self.bot_client.send_file(owner_chat, result_file, caption="📦 JSON результат")
 
 
 # =========================
@@ -834,15 +991,26 @@ async def main() -> None:
         data = event.data or b""
         if data.startswith(CALLBACK_PARSE):
             username = data.split(b":", 1)[1].decode().strip().lower()
-            if username in system.state.pending_approval:
+            if username in system.state.pending_approval.values():
                 system._queue_add(username, approved=True)
-                if not system.state.running and not system.state.queue:
-                    asyncio.create_task(system.run_approved_only(event.chat_id))
             await event.answer("Добавлено в очередь этапа 2")
         elif data.startswith(CALLBACK_SKIP):
             username = data.split(b":", 1)[1].decode().strip().lower()
-            system.state.pending_approval.discard(username)
+            for channel_id, pending_username in list(system.state.pending_approval.items()):
+                if pending_username == username:
+                    del system.state.pending_approval[channel_id]
             await event.answer("Пропущено")
+        elif data == CALLBACK_STAGE2_YES:
+            system.awaiting_stage2_confirmation = False
+            system.state.queue.clear()
+            await event.answer("Запускаю этап 2")
+            if system.state.approved_queue and not system.state.running:
+                asyncio.create_task(system.run_approved_only(event.chat_id))
+        elif data == CALLBACK_STAGE2_NO:
+            system.awaiting_stage2_confirmation = False
+            await event.answer("Завершаю")
+            if not system.state.running:
+                await system.finish(event.chat_id)
 
     logger.info("Bot started")
     await bot_client.run_until_disconnected()
