@@ -38,6 +38,7 @@ MAX_SUBS = 7000
 DELAY = 0.5
 RESOLVE_COOLDOWN_SECONDS = 1.0
 PROFILE_COOLDOWN_SECONDS = 1.2
+CANDIDATE_RETRY_TTL_SECONDS = 300.0
 
 proxy = {
     "proxy_type": "http",
@@ -103,7 +104,7 @@ class SessionState:
     found_channels: Dict[str, FoundChannel] = field(default_factory=dict)
 
     pending_approval: Set[str] = field(default_factory=set)
-    processed_candidates: Set[str] = field(default_factory=set)
+    processed_candidates: Dict[str, float] = field(default_factory=dict)
 
     last_resolve_ts: float = 0.0
     last_profile_ts: float = 0.0
@@ -286,26 +287,25 @@ class TelegramParserSystem:
         profile_url: Optional[str] = None,
     ) -> None:
         username = self._normalize_username(username)
-        if username in self.state.processed_candidates:
+        now = time.time()
+        last_attempt_ts = self.state.processed_candidates.get(username)
+        if last_attempt_ts and (now - last_attempt_ts) < CANDIDATE_RETRY_TTL_SECONDS:
             return
 
         if self._is_trash_username(username):
-            self.state.processed_candidates.add(username)
             return
 
         # Канал уже был найден ранее: повторно не резолвим и не отправляем,
         # чтобы не спамить одной и той же ссылкой в боте.
         if username in self.state.found_channels:
-            self.state.processed_candidates.add(username)
             return
 
+        self.state.processed_candidates[username] = now
         entity = await self._safe_resolve_entity(username)
         if not entity:
-            self.state.processed_candidates.add(username)
             return
 
         if not isinstance(entity, Channel):
-            self.state.processed_candidates.add(username)
             return
 
         subs = await self._safe_get_subs(entity)
@@ -338,7 +338,6 @@ class TelegramParserSystem:
                 username,
                 subs,
             )
-        self.state.processed_candidates.add(username)
 
     async def _parse_profile(self, owner_chat: int, user: User) -> None:
         if not user or not user.id:
@@ -436,8 +435,23 @@ class TelegramParserSystem:
                 pass
         return None
 
+    async def _handle_sender_entity(self, owner_chat: int, msg: Message, sender) -> bool:
+        if isinstance(sender, Channel) and sender.username:
+            await self._process_candidate(owner_chat, sender.username, source="comment")
+            return True
+        if isinstance(sender, Channel):
+            logger.info("PROFILE SKIPPED reason=channel_sender_without_username id=%s", sender.id)
+            await self._parse_channel_entity(owner_chat, sender, source="anonymous_comment_channel")
+            return True
+        if isinstance(sender, User):
+            await self._parse_profile(owner_chat, sender)
+            return True
+        return False
+
     async def _parse_messages(self, owner_chat: int, entity, limit: int, source: str) -> None:
         processed = 0
+        retry_messages: List[Message] = []
+        retry_seen_ids: Set[int] = set()
         async for msg in self.user_client.iter_messages(entity, limit=None):
             if not self.state.running:
                 return
@@ -459,18 +473,31 @@ class TelegramParserSystem:
                 await self._antiban_delay()
 
             sender = await self._resolve_sender(msg)
-            if isinstance(sender, Channel) and sender.username:
-                await self._process_candidate(owner_chat, sender.username, source="comment")
-            elif isinstance(sender, Channel):
-                logger.info("PROFILE SKIPPED reason=channel_sender_without_username id=%s", sender.id)
-                await self._parse_channel_entity(owner_chat, sender, source="anonymous_comment_channel")
-            elif isinstance(sender, User):
-                await self._parse_profile(owner_chat, sender)
-            else:
+            handled = await self._handle_sender_entity(owner_chat, msg, sender)
+            if not handled:
+                msg_id = getattr(msg, "id", None)
+                if msg_id and msg_id not in retry_seen_ids:
+                    retry_seen_ids.add(msg_id)
+                    retry_messages.append(msg)
+                    logger.info("PROFILE RETRY QUEUE ADD message_id=%s", msg_id)
+                else:
+                    self.state.profiles_checked += 1
+                    self.state.profiles_failed += 1
+                    logger.info("PROFILE FINAL FAIL message_id=%s reason=sender_unavailable", msg.id)
+
+            await self._antiban_delay()
+
+        for msg in retry_messages:
+            if not self.state.running:
+                return
+            msg_id = getattr(msg, "id", None)
+            logger.info("PROFILE RETRY QUEUE PROCESS message_id=%s", msg_id)
+            sender = await self._resolve_sender(msg)
+            handled = await self._handle_sender_entity(owner_chat, msg, sender)
+            if not handled:
                 self.state.profiles_checked += 1
                 self.state.profiles_failed += 1
-                logger.info("PROFILE FINAL FAIL message_id=%s reason=sender_unavailable", msg.id)
-
+                logger.info("PROFILE FINAL FAIL message_id=%s reason=sender_unavailable_after_retry", msg_id)
             await self._antiban_delay()
 
     async def _parse_channel_entity(self, owner_chat: int, entity, source: str = "message") -> None:
