@@ -37,7 +37,8 @@ MAX_SUBS = 7000
 # Небольшая пауза между запросами. Слишком большое значение резко режет скорость.
 DELAY = 0.15
 RESOLVE_COOLDOWN_SECONDS = 0.3
-PROFILE_COOLDOWN_SECONDS = 0.4
+PROFILE_WORKERS = 8
+PROFILE_BATCH_SIZE = 20
 CANDIDATE_RETRY_TTL_SECONDS = 300.0
 
 proxy = {
@@ -109,7 +110,6 @@ class SessionState:
     processed_candidates: Dict[str, float] = field(default_factory=dict)
 
     last_resolve_ts: float = 0.0
-    last_profile_ts: float = 0.0
 
     def reset_runtime(self) -> None:
         self.running = False
@@ -133,7 +133,6 @@ class SessionState:
         self.pending_approval.clear()
         self.processed_candidates.clear()
         self.last_resolve_ts = 0.0
-        self.last_profile_ts = 0.0
 
 
 # =========================
@@ -147,7 +146,7 @@ class TelegramParserSystem:
         self.user_client = user_client
         self.bot_client = bot_client
         self.state = SessionState()
-        self.profile_semaphore = asyncio.Semaphore(4)
+        self.profile_semaphore = asyncio.Semaphore(PROFILE_WORKERS)
         self.inflight_profiles: Set[int] = set()
 
     # ---------- Utility ----------
@@ -160,13 +159,6 @@ class TelegramParserSystem:
         if delta < RESOLVE_COOLDOWN_SECONDS:
             await asyncio.sleep(RESOLVE_COOLDOWN_SECONDS - delta)
         self.state.last_resolve_ts = time.time()
-
-    async def _profile_cooldown(self) -> None:
-        now = time.time()
-        delta = now - self.state.last_profile_ts
-        if delta < PROFILE_COOLDOWN_SECONDS:
-            await asyncio.sleep(PROFILE_COOLDOWN_SECONDS - delta)
-        self.state.last_profile_ts = time.time()
 
     @staticmethod
     def _normalize_username(raw: str) -> str:
@@ -356,7 +348,6 @@ class TelegramParserSystem:
         full_user = None
         for attempt in range(1, 3):
             try:
-                await self._profile_cooldown()
                 full_user = await self.user_client(GetFullUserRequest(user))
                 break
             except FloodWaitError as e:
@@ -411,7 +402,6 @@ class TelegramParserSystem:
             self.state.duplicate_profiles_skipped += 1
             return False
         self.inflight_profiles.add(user_id)
-        self.state.visited_profiles.add(user_id)
         return True
 
     async def _parse_profile_task(self, owner_chat: int, user: User) -> None:
@@ -421,6 +411,12 @@ class TelegramParserSystem:
         finally:
             if user and user.id:
                 self.inflight_profiles.discard(user.id)
+
+    async def _flush_profile_batch(self, profile_tasks: List[asyncio.Task]) -> None:
+        if not profile_tasks:
+            return
+        await asyncio.gather(*profile_tasks, return_exceptions=True)
+        profile_tasks.clear()
 
     async def _resolve_sender(self, msg: Message):
         sender = None
@@ -462,8 +458,7 @@ class TelegramParserSystem:
             await self._parse_channel_entity(owner_chat, sender, source="anonymous_comment_channel")
             return True
         if isinstance(sender, User):
-            await self._parse_profile(owner_chat, sender)
-            return True
+            return False
         return False
 
     async def _parse_messages(self, owner_chat: int, entity, limit: int, source: str) -> None:
@@ -506,11 +501,16 @@ class TelegramParserSystem:
 
             sender = await self._resolve_sender(msg)
             if isinstance(sender, User):
-                if self._reserve_profile(sender.id):
+                is_deleted = bool(getattr(sender, "deleted", False))
+                if getattr(sender, "bot", False) or is_deleted or not getattr(sender, "username", None):
+                    self.state.duplicate_profiles_skipped += 1
+                elif self._reserve_profile(sender.id):
                     self.state.profiles_checked += 1
                     self.state.unique_profiles_processed += 1
                     profile_tasks.append(asyncio.create_task(self._parse_profile_task(owner_chat, sender)))
                     new_profile_in_message = True
+                    if len(profile_tasks) >= PROFILE_BATCH_SIZE:
+                        await self._flush_profile_batch(profile_tasks)
             else:
                 handled = await self._handle_sender_entity(owner_chat, msg, sender)
                 if not handled:
@@ -538,10 +538,15 @@ class TelegramParserSystem:
             logger.info("PROFILE RETRY QUEUE PROCESS message_id=%s", msg_id)
             sender = await self._resolve_sender(msg)
             if isinstance(sender, User):
-                if self._reserve_profile(sender.id):
+                is_deleted = bool(getattr(sender, "deleted", False))
+                if getattr(sender, "bot", False) or is_deleted or not getattr(sender, "username", None):
+                    self.state.duplicate_profiles_skipped += 1
+                elif self._reserve_profile(sender.id):
                     self.state.profiles_checked += 1
                     self.state.unique_profiles_processed += 1
                     profile_tasks.append(asyncio.create_task(self._parse_profile_task(owner_chat, sender)))
+                    if len(profile_tasks) >= PROFILE_BATCH_SIZE:
+                        await self._flush_profile_batch(profile_tasks)
                 continue
 
             handled = await self._handle_sender_entity(owner_chat, msg, sender)
@@ -550,8 +555,7 @@ class TelegramParserSystem:
                 self.state.profiles_failed += 1
                 logger.info("PROFILE FAIL message_id=%s reason=sender_unavailable_after_retry", msg_id)
 
-        if profile_tasks:
-            await asyncio.gather(*profile_tasks, return_exceptions=True)
+        await self._flush_profile_batch(profile_tasks)
 
     async def _parse_channel_entity(self, owner_chat: int, entity, source: str = "message") -> None:
         ent_id = getattr(entity, "id", None)
