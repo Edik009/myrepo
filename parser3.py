@@ -110,6 +110,7 @@ class SessionState:
     processed_usernames: Set[str] = field(default_factory=set)
     queue_set: Set[str] = field(default_factory=set)
     queued_channel_ids: Set[int] = field(default_factory=set)
+    approved_set: Set[str] = field(default_factory=set)
 
     pending_approval: Dict[int, str] = field(default_factory=dict)
     stage2_total_channels: int = 0
@@ -140,6 +141,7 @@ class SessionState:
         self.processed_usernames.clear()
         self.queue_set.clear()
         self.queued_channel_ids.clear()
+        self.approved_set.clear()
         self.pending_approval.clear()
         self.stage2_total_channels = 0
         self.stage2_processed_channels = 0
@@ -282,6 +284,8 @@ class TelegramParserSystem:
 
     def _queue_add(self, username: str, approved: bool = False, channel_id: Optional[int] = None) -> None:
         normalized = self._normalize_username(username)
+        if approved and normalized in self.state.approved_set:
+            return
         if normalized in self.state.queue_set:
             return
         if channel_id and channel_id in self.state.queued_channel_ids:
@@ -291,6 +295,7 @@ class TelegramParserSystem:
             self.state.queued_channel_ids.add(channel_id)
         logger.info("QUEUE ADD username=%s approved=%s", username, approved)
         if approved:
+            self.state.approved_set.add(normalized)
             self.state.approved_queue.append(normalized)
         else:
             self.state.queue.append(normalized)
@@ -314,10 +319,12 @@ class TelegramParserSystem:
             return False
 
         subs = await self._safe_get_subs(entity)
+        if subs <= 0:
+            return False
         channel_id = int(getattr(entity, "id", 0) or 0)
         normalized_username = self._normalize_username(getattr(entity, "username", None) or username)
         channel_url = f"https://t.me/{normalized_username}"
-        normalized_profile_url = profile_url or f"tg://user?id={owner_chat}"
+        normalized_profile_url = profile_url or ""
 
         self._queue_add(normalized_username, approved=False, channel_id=channel_id)
 
@@ -780,6 +787,8 @@ class TelegramParserSystem:
         self.state.running = True
         self.stop_requested = False
         self.state.visited_entities.clear()
+        self.state.queue_set.clear()
+        self.state.queued_channel_ids.clear()
         self.state.message_count = 0
         self.state.profiles_checked = 0
         self.state.profiles_success = 0
@@ -799,6 +808,7 @@ class TelegramParserSystem:
             if self.stop_requested:
                 break
             username = self.state.approved_queue.pop()  # DFS
+            self.state.approved_set.discard(username)
             self.state.queue_set.discard(username)
             self.state.processed_usernames.add(username)
             self.state.stage2_processed_channels += 1
