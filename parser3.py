@@ -2,7 +2,6 @@ import asyncio
 import json
 import logging
 import os
-import random
 import re
 import time
 from collections import deque
@@ -22,21 +21,30 @@ from telethon.tl.functions.users import GetFullUserRequest
 from telethon.tl.types import Channel, Message, User
 
 
-# =========================
-# Config
-# =========================
-API_ID = int(os.getenv("TG_API_ID", "0"))
-API_HASH = os.getenv("TG_API_HASH", "")
-BOT_TOKEN = os.getenv("TG_BOT_TOKEN", "")
+# ================= CONFIG =================
+API_ID = 20784926
+API_HASH = "2884cd0ca1ab0bbdef307767e2e2f1d0"
+BOT_TOKEN = "8292152730:AAEJOCpGqXG6U6xxV6qVyIMER0FbgYZiLLo"
+
+ADMIN_ID = 8674344477
+
 USER_SESSION = os.getenv("TG_USER_SESSION", "user_parser")
 BOT_SESSION = os.getenv("TG_BOT_SESSION", "bot_controller")
 
 MIN_SUBS = 300
 MAX_SUBS = 7000
 
-DELAY_MIN = 0.5
-DELAY_MAX = 1.0
+# Небольшая пауза между запросами. Слишком большое значение резко режет скорость.
+DELAY = 0.1
 RESOLVE_COOLDOWN_SECONDS = 1.0
+
+proxy = {
+    "proxy_type": "http",
+    "addr": "168.81.67.74",
+    "port": 8000,
+    "username": "c3M0j0",
+    "password": "cHjdAE",
+}
 
 CALLBACK_PARSE = b"parse_yes:"
 CALLBACK_SKIP = b"parse_no:"
@@ -120,7 +128,7 @@ class TelegramParserSystem:
 
     # ---------- Utility ----------
     async def _antiban_delay(self) -> None:
-        await asyncio.sleep(random.uniform(DELAY_MIN, DELAY_MAX))
+        await asyncio.sleep(DELAY)
 
     async def _resolve_cooldown(self) -> None:
         now = time.time()
@@ -487,14 +495,8 @@ def parse_user_payload(text: str) -> Tuple[int, int, List[str]]:
 # Main bot wiring
 # =========================
 async def main() -> None:
-    if not API_ID or not API_HASH or not BOT_TOKEN:
-        raise RuntimeError(
-            "Set env vars: TG_API_ID, TG_API_HASH, TG_BOT_TOKEN. "
-            "Also ensure USER_SESSION/BOT_SESSION paths are valid."
-        )
-
-    user_client = TelegramClient(USER_SESSION, API_ID, API_HASH)
-    bot_client = TelegramClient(BOT_SESSION, API_ID, API_HASH)
+    user_client = TelegramClient(USER_SESSION, API_ID, API_HASH, proxy=proxy)
+    bot_client = TelegramClient(BOT_SESSION, API_ID, API_HASH, proxy=proxy)
 
     await user_client.start()
     await bot_client.start(bot_token=BOT_TOKEN)
@@ -503,6 +505,8 @@ async def main() -> None:
 
     @bot_client.on(events.NewMessage(pattern=r"/start"))
     async def on_start(event):
+        if event.sender_id != ADMIN_ID:
+            return
         system.state.owner_user_id = event.sender_id
         await event.respond(
             "🤖 Telegram Parser готов.\n"
@@ -519,14 +523,20 @@ async def main() -> None:
 
     @bot_client.on(events.NewMessage(pattern=r"📊 Прогресс"))
     async def on_progress(event):
+        if event.sender_id != ADMIN_ID:
+            return
         await event.respond(await system.progress_text())
 
     @bot_client.on(events.NewMessage(pattern=r"⛔ Стоп"))
     async def on_stop(event):
+        if event.sender_id != ADMIN_ID:
+            return
         await system.stop(event.chat_id)
 
     @bot_client.on(events.NewMessage(pattern=r"🚀 Старт"))
     async def on_run(event):
+        if event.sender_id != ADMIN_ID:
+            return
         if system.state.running:
             await event.respond("⚠️ Уже запущено.")
             return
@@ -540,6 +550,8 @@ async def main() -> None:
 
     @bot_client.on(events.NewMessage)
     async def on_payload(event):
+        if event.sender_id != ADMIN_ID:
+            return
         text = (event.raw_text or "").strip()
         if text.startswith("/") or text in {"🚀 Старт", "⛔ Стоп", "📊 Прогресс"}:
             return
@@ -565,6 +577,8 @@ async def main() -> None:
 
     @bot_client.on(events.CallbackQuery)
     async def on_callback(event):
+        if event.sender_id != ADMIN_ID:
+            return
         data = event.data or b""
         if data.startswith(CALLBACK_PARSE):
             username = data.split(b":", 1)[1].decode().strip().lower()
