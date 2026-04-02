@@ -38,7 +38,7 @@ MAX_SUBS = 7000
 # Небольшая пауза между запросами. Слишком большое значение резко режет скорость.
 DELAY = 0.08
 RESOLVE_COOLDOWN_SECONDS = 0.35
-PROFILE_WORKERS = 12
+PROFILE_WORKERS = 25
 CANDIDATE_WORKERS = 4
 MAX_CANDIDATE_RETRIES = 3
 MAX_PROFILE_RETRIES = 2
@@ -184,7 +184,7 @@ class TelegramParserSystem:
         self.state = SessionState()
         self.profile_semaphore = asyncio.Semaphore(PROFILE_WORKERS)
         self.candidate_semaphore = asyncio.Semaphore(CANDIDATE_WORKERS)
-        self.resolve_semaphore = asyncio.Semaphore(2)
+        self.resolve_semaphore = asyncio.Semaphore(4)
         self.inflight_profiles: Set[int] = set()
         self.resolving_now: Set[str] = set()
         self.resolve_cache: Dict[str, object] = {}
@@ -264,7 +264,7 @@ class TelegramParserSystem:
         lowered = username.lower()
         if lowered.startswith("+") or lowered.startswith("joinchat"):
             return True
-        return lowered.endswith("bot")
+        return False
 
     def _extract_candidates(self, text: Optional[str]) -> Set[str]:
         if not text:
@@ -386,7 +386,7 @@ class TelegramParserSystem:
         normalized = self._normalize_username(username)
         if approved and channel_id and channel_id in self.state.approved_set:
             return
-        if channel_id and channel_id in self.state.queued_channel_ids:
+        if channel_id and channel_id in self.state.queued_channel_ids and not profile_url:
             return
         if channel_id:
             self.state.queued_channel_ids.add(channel_id)
@@ -761,7 +761,7 @@ class TelegramParserSystem:
         if user_id in self.inflight_profiles:
             self.state.duplicate_profiles_skipped += 1
             return False
-        if now - last_check <= 5:
+        if now - last_check <= 1:
             self.state.duplicate_profiles_skipped += 1
             return False
         self.inflight_profiles.add(user_id)
@@ -861,8 +861,8 @@ class TelegramParserSystem:
                     continue
 
                 self.state.message_count += 1
-                text = msg.raw_text or ""
                 sender = await self._resolve_sender(msg)
+                text = msg.raw_text or ""
 
                 new_profile_in_message = False
                 if isinstance(sender, User):
@@ -1386,7 +1386,7 @@ async def main() -> None:
             system.state.channel_parse_queue.clear()
             system.state.channel_parse_in_queue.clear()
             await event.answer("Запускаю этап 2")
-            if system.state.approved_queue and not system.state.running:
+            if system.state.approved_queue:
                 asyncio.create_task(system.run_approved_only(event.chat_id))
         elif data == CALLBACK_STAGE2_NO:
             system.awaiting_stage2_confirmation = False
