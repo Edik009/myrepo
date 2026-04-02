@@ -209,7 +209,7 @@ class RateLimiter:
 # Parser
 # =========================
 class TelegramParserSystem:
-    URL_PATTERN = re.compile(r"(?:https?://)?t\.me/([A-Za-z0-9_+/]+)", re.IGNORECASE)
+    URL_PATTERN = re.compile(r"(?:https?://)?t\.me/([^\s<>\")]+)", re.IGNORECASE)
     TG_RESOLVE_PATTERN = re.compile(r"tg://resolve\?domain=([A-Za-z0-9_]{4,})", re.IGNORECASE)
     MENTION_PATTERN = re.compile(r"@([A-Za-z0-9_]{5,})")
 
@@ -392,6 +392,27 @@ class TelegramParserSystem:
         value = value.split("/")[0].split("?")[0].strip()
         return value.lower()
 
+    def _extract_username_from_tme_path(self, raw_path: str) -> str:
+        path = (raw_path or "").strip()
+        if not path:
+            return ""
+        path = path.split("?", 1)[0].split("#", 1)[0].strip("/")
+        if not path:
+            return ""
+        parts = [x for x in path.split("/") if x]
+        if not parts:
+            return ""
+        head = parts[0].lower()
+        if head in {"joinchat", "+", "addstickers", "share", "iv", "proxy", "login", "confirmphone"}:
+            return ""
+        if head == "s":
+            if len(parts) < 2:
+                return ""
+            return self._normalize_username(parts[1])
+        if head in {"c", "b"}:
+            return ""
+        return self._normalize_username(parts[0])
+
     @staticmethod
     def _is_trash_username(username: str) -> bool:
         lowered = username.lower()
@@ -404,7 +425,9 @@ class TelegramParserSystem:
             return set()
         out: Set[str] = set()
         for match in self.URL_PATTERN.findall(text):
-            out.add(self._normalize_username(match))
+            extracted = self._extract_username_from_tme_path(match)
+            if extracted:
+                out.add(extracted)
         for match in self.TG_RESOLVE_PATTERN.findall(text):
             out.add(self._normalize_username(match))
         for mention in self.MENTION_PATTERN.findall(text):
@@ -738,6 +761,10 @@ class TelegramParserSystem:
         linked = await self._resolve_linked_chat(entity)
         if linked:
             await self._parse_chat_entity(owner_chat, linked, depth=depth + 1)
+            return
+        if isinstance(entity, Channel) and bool(getattr(entity, "megagroup", False)):
+            logger.info("ENTITY id=%s depth=chat fallback=self_megagroup", getattr(entity, "id", None))
+            await self._parse_chat_entity(owner_chat, entity, depth=depth + 1)
             return
         logger.info(
             "ENTITY id=%s depth=chat skipped=no_linked_chat",
