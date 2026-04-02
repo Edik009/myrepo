@@ -483,7 +483,7 @@ class TelegramParserSystem:
                 break
             linked = await self._resolve_linked_chat(entity)
             if linked:
-                await self._parse_chat_entity(owner_chat, linked, depth=depth)
+                await self._parse_chat_entity(owner_chat, linked, depth=depth + 1)
             processed += 1
 
     async def _process_candidate_task(
@@ -753,7 +753,7 @@ class TelegramParserSystem:
         if user_id in self.inflight_profiles:
             self.state.duplicate_profiles_skipped += 1
             return False
-        if now - last_check <= 300:
+        if now - last_check <= 60:
             self.state.duplicate_profiles_skipped += 1
             return False
         self.inflight_profiles.add(user_id)
@@ -828,7 +828,7 @@ class TelegramParserSystem:
             return True
         if isinstance(sender, Channel):
             logger.info("PROFILE SKIPPED reason=channel_sender_without_username id=%s", sender.id)
-            await self._parse_channel_entity(owner_chat, sender, source="anonymous_comment_channel", depth=depth + 1)
+            self._schedule_channel_for_parsing(sender.id, depth + 1)
             return True
         if isinstance(sender, User):
             return False
@@ -862,6 +862,8 @@ class TelegramParserSystem:
                     self._schedule_candidate_processing(owner_chat, candidate, source=source, depth=depth + 1)
                 if self.stop_requested:
                     break
+                if processed % 5 == 0:
+                    await self._drain_profile_retries(owner_chat)
                 if processed % 20 == 0:
                     await self._drain_main_queue(owner_chat)
                     await self._drain_profile_retries(owner_chat)
@@ -1088,7 +1090,7 @@ class TelegramParserSystem:
         while (self.state.main_queue or self.pending_tasks or self.state.channel_parse_queue) and self.state.running:
             if self.stop_requested:
                 break
-            await self._drain_main_queue(owner_chat, batch_size=50)
+            await self._drain_main_queue(owner_chat, batch_size=100)
             await self._drain_profile_retries(owner_chat)
             await self._drain_channel_parse_queue(owner_chat, batch_size=30)
             if len(self.pending_tasks) > 200:
