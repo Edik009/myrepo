@@ -104,6 +104,7 @@ class SessionState:
 
     message_count: int = 0
     found_count: int = 0
+    found_filtered_count: int = 0
     profiles_checked: int = 0
     profiles_success: int = 0
     profiles_failed: int = 0
@@ -145,6 +146,7 @@ class SessionState:
         self.started_at = 0.0
         self.message_count = 0
         self.found_count = 0
+        self.found_filtered_count = 0
         self.profiles_checked = 0
         self.profiles_success = 0
         self.profiles_failed = 0
@@ -919,11 +921,12 @@ class TelegramParserSystem:
                 source=source,
                 profile_url=normalized_profile_url,
             )
+            self.state.found_count = len(self.state.found_channels_all)
 
         if MIN_SUBS <= subs <= MAX_SUBS:
             if channel_id not in self.state.found_channels_filtered:
                 self.state.found_channels_filtered[channel_id] = self.state.found_channels_all[channel_id]
-                self.state.found_count = len(self.state.found_channels_filtered)
+                self.state.found_filtered_count = len(self.state.found_channels_filtered)
                 if source != "seed":
                     self.state.pending_approval[channel_id] = normalized_username
                     self._save_stage2_state()
@@ -1135,6 +1138,8 @@ class TelegramParserSystem:
         return True
 
     def _reserve_profile(self, user_id: int, source_channel_id: Optional[int]) -> bool:
+        if user_id in self.state.visited_profiles:
+            return False
         if user_id in self.inflight_profiles:
             return False
         self.inflight_profiles.add(user_id)
@@ -1312,7 +1317,7 @@ class TelegramParserSystem:
                 e,
             )
 
-        for _ in range(3):
+        for attempt_idx in range(3):
             new_retry = []
             for msg in retry_messages:
                 if not self.state.running or self.stop_requested:
@@ -1364,10 +1369,13 @@ class TelegramParserSystem:
                         except Exception:
                             pass
                     new_retry.append(msg)
-                    self.state.profiles_checked += 1
-                    self.state.profiles_failed += 1
-                    logger.info("PROFILE FAIL message_id=%s reason=sender_unavailable_after_retry", msg_id)
+                    if attempt_idx == 2:
+                        self.state.profiles_checked += 1
+                        self.state.profiles_failed += 1
+                        logger.info("PROFILE FAIL message_id=%s reason=sender_unavailable_after_retry", msg_id)
             retry_messages = new_retry
+            if not retry_messages:
+                break
         await self._drain_main_queue(owner_chat)
         await self._drain_profile_retries(owner_chat)
 
@@ -1619,7 +1627,8 @@ class TelegramParserSystem:
         return (
             f"⏱ Время: {elapsed} сек\n"
             f"📨 Сообщений: {self.state.message_count}\n"
-            f"🔥 Каналов: {self.state.found_count}\n"
+            f"🔥 Каналов (всего): {self.state.found_count}\n"
+            f"🎯 Каналов (300–7000): {self.state.found_filtered_count}\n"
             f"📦 Очередь: {len(self.state.main_queue)}\n"
             f"🟡 В работе: {sum(1 for v in self.state.username_state.values() if v == 'IN_PROGRESS')}\n"
             f"✅ Done: {sum(1 for v in self.state.username_state.values() if v == 'DONE')}\n"
