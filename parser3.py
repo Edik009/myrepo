@@ -38,11 +38,11 @@ MAX_SUBS = 7000
 # Небольшая пауза между запросами. Слишком большое значение резко режет скорость.
 DELAY = 0.03
 RESOLVE_COOLDOWN_SECONDS = 0.35
-PROFILE_WORKERS = 25
-CANDIDATE_WORKERS = 4
+PROFILE_WORKERS = 50
+CANDIDATE_WORKERS = 10
 MAX_CANDIDATE_RETRIES = 3
 MAX_PROFILE_RETRIES = 2
-MAX_DEPTH = 3
+MAX_DEPTH = 5
 
 proxy = {
     "proxy_type": "http",
@@ -187,7 +187,7 @@ class TelegramParserSystem:
         self.resolve_semaphore = asyncio.Semaphore(4)
         self.inflight_profiles: Set[int] = set()
         self.resolving_now: Set[str] = set()
-        self.resolve_cache: Dict[str, object] = {}
+        self.resolve_cache: Dict[str, Tuple[object, float]] = {}
         self.stop_requested = False
         self.pending_tasks: Set[asyncio.Task] = set()
         self.profile_retry_task: Optional[asyncio.Task] = None
@@ -279,8 +279,12 @@ class TelegramParserSystem:
 
     async def _safe_resolve_entity(self, username: str):
         username = self._normalize_username(username)
-        if username in self.resolve_cache:
-            return self.resolve_cache[username]
+        cached_item = self.resolve_cache.get(username)
+        if cached_item:
+            cached_entity, cached_ts = cached_item
+            if time.time() - cached_ts <= 60:
+                return cached_entity
+            self.resolve_cache.pop(username, None)
         if username in self.resolving_now:
             logger.info("RESOLVE SKIPPED duplicate username=%s", username)
             return "IN_PROGRESS"
@@ -290,7 +294,7 @@ class TelegramParserSystem:
             await self._resolve_cooldown()
             async with self.resolve_semaphore:
                 entity = await self.user_client.get_entity(username)
-            self.resolve_cache[username] = entity
+            self.resolve_cache[username] = (entity, time.time())
             return entity
         except FloodWaitError as e:
             logger.warning("FLOOD WAIT on resolve username=%s seconds=%s", username, e.seconds)
@@ -419,8 +423,11 @@ class TelegramParserSystem:
         normalized = self._normalize_username(username)
         if depth > MAX_DEPTH:
             return
-        if normalized in self.resolve_cache and source not in {"bio", "attached"}:
-            return
+        cached_item = self.resolve_cache.get(normalized)
+        if cached_item and source not in {"bio", "attached"}:
+            _, cached_ts = cached_item
+            if time.time() - cached_ts <= 60:
+                return
         state = self.state.username_state.get(normalized, "NEW")
         is_profile_source = source in {"bio", "attached", "profile"}
         if state == "IN_PROGRESS":
@@ -771,7 +778,7 @@ class TelegramParserSystem:
         if user_id in self.inflight_profiles:
             self.state.duplicate_profiles_skipped += 1
             return False
-        if now - last_check <= 0.1:
+        if now - last_check <= 0:
             self.state.duplicate_profiles_skipped += 1
             return False
         self.inflight_profiles.add(user_id)
@@ -974,6 +981,28 @@ class TelegramParserSystem:
 
             handled = await self._handle_sender_entity(owner_chat, msg, sender, depth=depth)
             if not handled:
+                sender_id = getattr(msg, "sender_id", None)
+                if sender_id:
+                    try:
+                        forced_entity = await self.user_client.get_entity(sender_id)
+                        if isinstance(forced_entity, User) and self._reserve_profile(forced_entity.id, source_channel_id):
+                            self.state.profiles_checked += 1
+                            self.state.unique_profiles_processed += 1
+                            if not getattr(forced_entity, "username", None):
+                                self.state.profiles_without_username_processed += 1
+                            task = asyncio.create_task(
+                                self._parse_profile_task(
+                                    owner_chat,
+                                    forced_entity,
+                                    source_channel_id,
+                                    attempt=0,
+                                    depth=depth + 1,
+                                )
+                            )
+                            self._track_task(task)
+                            continue
+                    except Exception:
+                        pass
                 self.state.profiles_checked += 1
                 self.state.profiles_failed += 1
                 logger.info("PROFILE FAIL message_id=%s reason=sender_unavailable_after_retry", msg_id)
