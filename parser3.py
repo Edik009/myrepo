@@ -283,9 +283,14 @@ class TelegramParserSystem:
         cached_item = self.resolve_cache.get(username)
         if cached_item:
             cached_entity, cached_ts = cached_item
-            if time.time() - cached_ts <= 300:
+            if cached_entity == "FLOOD_BLOCK":
+                if time.time() <= cached_ts:
+                    return "DEFERRED"
+                self.resolve_cache.pop(username, None)
+            elif time.time() - cached_ts <= 300:
                 return cached_entity
-            self.resolve_cache.pop(username, None)
+            else:
+                self.resolve_cache.pop(username, None)
         if username in self.resolving_now:
             logger.info("RESOLVE SKIPPED duplicate username=%s", username)
             return "IN_PROGRESS"
@@ -302,7 +307,8 @@ class TelegramParserSystem:
             if e.seconds < 20:
                 await asyncio.sleep(e.seconds)
                 return await self._safe_resolve_entity(username)
-            return None
+            self.resolve_cache[username] = ("FLOOD_BLOCK", time.time() + float(e.seconds))
+            return "DEFERRED"
         except (UsernameInvalidError, UsernameNotOccupiedError, InviteHashExpiredError):
             logger.info("QUEUE SKIP invalid username=%s", username)
             return None
@@ -428,8 +434,22 @@ class TelegramParserSystem:
             return
         cached_item = self.resolve_cache.get(normalized)
         if cached_item and not profile_url:
-            _, cached_ts = cached_item
-            if time.time() - cached_ts <= 300:
+            cached_entity, cached_ts = cached_item
+            if cached_entity == "FLOOD_BLOCK":
+                now_ts = time.time()
+                if now_ts <= cached_ts:
+                    run_at = cached_ts + 1.0
+                    priority = self._source_priority(source, attempt)
+                    heapq.heappush(
+                        self.state.main_queue,
+                        (run_at, priority, normalized, source, profile_url, attempt, depth),
+                    )
+                    self.state.in_queue.add(normalized)
+                    if normalized not in self.state.username_state:
+                        self.state.username_state[normalized] = "NEW"
+                    return
+                self.resolve_cache.pop(normalized, None)
+            elif time.time() - cached_ts <= 300:
                 return
         state = self.state.username_state.get(normalized, "NEW")
         if state == "IN_PROGRESS":
@@ -580,6 +600,17 @@ class TelegramParserSystem:
         entity = await self._safe_resolve_entity(username)
         if entity == "IN_PROGRESS":
             self.state.username_state[username] = "NEW"
+            return False
+        if entity == "DEFERRED":
+            self.state.username_state[username] = "NEW"
+            self._enqueue_main_candidate(
+                username=username,
+                source=source,
+                profile_url=profile_url,
+                attempt=attempt,
+                is_retry=True,
+                depth=depth,
+            )
             return False
         if not entity:
             self.state.username_state[username] = "FAILED"
@@ -1154,6 +1185,11 @@ class TelegramParserSystem:
             await self._drain_channel_parse_queue(owner_chat, batch_size=300)
             if len(self.pending_tasks) > 200:
                 await asyncio.sleep(0.3)
+            if self.state.main_queue and not self.pending_tasks and not self.state.channel_parse_queue:
+                next_run_at = self.state.main_queue[0][0]
+                now = time.time()
+                if next_run_at > now:
+                    await asyncio.sleep(min(0.5, next_run_at - now))
             if not self.state.main_queue and not self.state.channel_parse_queue and self.pending_tasks:
                 await asyncio.sleep(0.1)
 
