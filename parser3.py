@@ -868,16 +868,17 @@ class TelegramParserSystem:
             if channel_id not in self.state.found_channels_filtered:
                 self.state.found_channels_filtered[channel_id] = self.state.found_channels_all[channel_id]
                 self.state.found_count = len(self.state.found_channels_filtered)
-                self.state.pending_approval[channel_id] = normalized_username
-                self._save_stage2_state()
-                await self._send_found_channel(
-                    owner_chat,
-                    normalized_username,
-                    subs,
-                    source,
-                    channel_id=channel_id,
-                    profile_url=normalized_profile_url,
-                )
+                if source != "seed":
+                    self.state.pending_approval[channel_id] = normalized_username
+                    self._save_stage2_state()
+                    await self._send_found_channel(
+                        owner_chat,
+                        normalized_username,
+                        subs,
+                        source,
+                        channel_id=channel_id,
+                        profile_url=normalized_profile_url,
+                    )
         else:
             logger.info(
                 "CHANNEL SKIPPED username=%s reason=subs_filter_only_for_send subs=%s",
@@ -1658,7 +1659,7 @@ async def main() -> None:
             system.state.chat_limit = chat_limit
 
             for channel in channels:
-                system._queue_add(channel, approved=False)
+                system._queue_add(channel, approved=False, source="seed")
 
             await event.respond(
                 "✅ Данные приняты.\n"
