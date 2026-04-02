@@ -5,7 +5,7 @@ import os
 import re
 import time
 import json
-from collections import deque
+from collections import defaultdict, deque
 from dataclasses import dataclass, field
 from typing import Deque, Dict, List, Optional, Set, Tuple
 
@@ -172,6 +172,37 @@ class SessionState:
         self.last_subs_ts = 0.0
 
 
+class RateLimiter:
+    def __init__(self):
+        self.intervals = {
+            "resolve": 0.5,
+            "full_channel": 1.0,
+            "full_user": 1.0,
+        }
+        self.next_allowed: Dict[str, float] = defaultdict(float)
+        self.lock = asyncio.Lock()
+        self.penalty_multiplier = 1.0
+
+    async def acquire(self, key: str) -> None:
+        async with self.lock:
+            now = time.monotonic()
+            next_ts = self.next_allowed.get(key, 0.0)
+            wait = max(0.0, next_ts - now)
+            slot = max(now, next_ts)
+            self.next_allowed[key] = slot + self.intervals.get(key, 1.0) * self.penalty_multiplier
+        if wait > 0:
+            await asyncio.sleep(wait)
+
+    def report_flood(self, seconds: int) -> None:
+        if seconds >= 20:
+            self.penalty_multiplier = min(5.0, self.penalty_multiplier * 1.25)
+        else:
+            self.penalty_multiplier = min(3.0, self.penalty_multiplier * 1.1)
+
+    def report_success(self) -> None:
+        self.penalty_multiplier = max(1.0, self.penalty_multiplier * 0.995)
+
+
 # =========================
 # Parser
 # =========================
@@ -185,7 +216,10 @@ class TelegramParserSystem:
         self.state = SessionState()
         self.profile_semaphore = asyncio.Semaphore(PROFILE_WORKERS)
         self.candidate_semaphore = asyncio.Semaphore(CANDIDATE_WORKERS)
-        self.resolve_semaphore = asyncio.Semaphore(10)
+        self.resolve_semaphore = asyncio.Semaphore(2)
+        self.channel_semaphore = asyncio.Semaphore(1)
+        self.user_semaphore = asyncio.Semaphore(1)
+        self.rate_limiter = RateLimiter()
         self.inflight_profiles: Set[int] = set()
         self.resolving_now: Set[str] = set()
         self.resolve_cache: Dict[str, Tuple[object, float]] = {}
@@ -194,6 +228,51 @@ class TelegramParserSystem:
         self.profile_retry_task: Optional[asyncio.Task] = None
         self.awaiting_stage2_confirmation = False
         self._load_stage2_state()
+
+    async def _limited_get_entity(self, target):
+        while True:
+            await self.rate_limiter.acquire("resolve")
+            async with self.resolve_semaphore:
+                try:
+                    entity = await self.user_client.get_entity(target)
+                    self.rate_limiter.report_success()
+                    return entity
+                except FloodWaitError as e:
+                    self.rate_limiter.report_flood(e.seconds)
+                    if e.seconds < 20:
+                        await asyncio.sleep(e.seconds)
+                        continue
+                    return ("DEFERRED", e.seconds)
+
+    async def _limited_get_full_channel(self, entity):
+        while True:
+            await self.rate_limiter.acquire("full_channel")
+            async with self.channel_semaphore:
+                try:
+                    full = await self.user_client(GetFullChannelRequest(entity))
+                    self.rate_limiter.report_success()
+                    return full
+                except FloodWaitError as e:
+                    self.rate_limiter.report_flood(e.seconds)
+                    if e.seconds < 20:
+                        await asyncio.sleep(e.seconds)
+                        continue
+                    return ("DEFERRED", e.seconds)
+
+    async def _limited_get_full_user(self, user):
+        while True:
+            await self.rate_limiter.acquire("full_user")
+            async with self.user_semaphore:
+                try:
+                    full = await self.user_client(GetFullUserRequest(user))
+                    self.rate_limiter.report_success()
+                    return full
+                except FloodWaitError as e:
+                    self.rate_limiter.report_flood(e.seconds)
+                    if e.seconds < 20:
+                        await asyncio.sleep(e.seconds)
+                        continue
+                    return ("DEFERRED", e.seconds)
 
     # ---------- Utility ----------
     async def _antiban_delay(self) -> None:
@@ -298,8 +377,11 @@ class TelegramParserSystem:
         logger.info("RESOLVE username=%s", username)
         try:
             await self._resolve_cooldown()
-            async with self.resolve_semaphore:
-                entity = await self.user_client.get_entity(username)
+            entity = await self._limited_get_entity(username)
+            if isinstance(entity, tuple) and entity and entity[0] == "DEFERRED":
+                delay_seconds = float(entity[1])
+                self.resolve_cache[username] = ("FLOOD_BLOCK", time.time() + delay_seconds)
+                return "DEFERRED"
             self.resolve_cache[username] = (entity, time.time())
             return entity
         except FloodWaitError as e:
@@ -324,7 +406,9 @@ class TelegramParserSystem:
     async def _safe_get_subs(self, entity) -> int:
         try:
             await self._subs_cooldown()
-            full = await self.user_client(GetFullChannelRequest(entity))
+            full = await self._limited_get_full_channel(entity)
+            if isinstance(full, tuple) and full and full[0] == "DEFERRED":
+                return -1
             subs = int(getattr(full.full_chat, "participants_count", 0) or 0)
             logger.info("CHANNEL subs username=%s subs=%s", getattr(entity, "username", None), subs)
             return subs
@@ -468,7 +552,7 @@ class TelegramParserSystem:
         elif source == "attached":
             run_at = time.time()
         else:
-            run_at = time.time() + (min(30.0, 5.0 * attempt) if is_retry else 0.0)
+            run_at = time.time() + (min(60.0, float(2 ** max(1, attempt))) if is_retry else 0.0)
         priority = self._source_priority(source, attempt)
         heapq.heappush(self.state.main_queue, (run_at, priority, normalized, source, profile_url, attempt, depth))
         self.state.in_queue.add(normalized)
@@ -513,7 +597,7 @@ class TelegramParserSystem:
             if depth > MAX_DEPTH:
                 continue
             try:
-                entity = await self.user_client.get_entity(channel_id)
+                entity = await self._limited_get_entity(channel_id)
             except Exception:
                 entity = None
             if not entity or not isinstance(entity, Channel):
@@ -630,6 +714,17 @@ class TelegramParserSystem:
             return False
 
         subs = await self._safe_get_subs(entity)
+        if subs < 0:
+            self.state.username_state[username] = "NEW"
+            self._enqueue_main_candidate(
+                username=username,
+                source=source,
+                profile_url=profile_url,
+                attempt=attempt,
+                is_retry=True,
+                depth=depth,
+            )
+            return False
         if subs <= 0:
             self.state.username_state[username] = "FAILED"
             if attempt < MAX_CANDIDATE_RETRIES:
@@ -695,7 +790,7 @@ class TelegramParserSystem:
         if attempt > MAX_PROFILE_RETRIES:
             logger.info("PROFILE RETRY DROP user_id=%s reason=max_retries", getattr(user, "id", None))
             return
-        wait_seconds = min(30.0, 5.0 * attempt)
+        wait_seconds = min(60.0, float(2 ** max(1, attempt)))
         self.state.retry_profiles.append(
             ProfileRetry(
                 user=user,
@@ -750,7 +845,10 @@ class TelegramParserSystem:
         full_user = None
         for attempt in range(1, 3):
             try:
-                full_user = await self.user_client(GetFullUserRequest(user))
+                full_user = await self._limited_get_full_user(user)
+                if isinstance(full_user, tuple) and full_user and full_user[0] == "DEFERRED":
+                    self._enqueue_profile_retry(user, source_channel_id, attempt, depth)
+                    return False
                 break
             except FloodWaitError as e:
                 logger.warning(
@@ -793,7 +891,7 @@ class TelegramParserSystem:
         if personal_channel_id:
             logger.info("PROFILE HAS ATTACHED CHANNEL user_id=%s channel_id=%s", user.id, personal_channel_id)
             try:
-                entity = await self.user_client.get_entity(personal_channel_id)
+                entity = await self._limited_get_entity(personal_channel_id)
                 if isinstance(entity, Channel) and entity.username:
                     self._schedule_candidate_processing(
                         owner_chat,
@@ -866,7 +964,7 @@ class TelegramParserSystem:
         if sender_id:
             logger.info("PROFILE RETRY sender_id=%s message_id=%s", sender_id, getattr(msg, "id", None))
             try:
-                return await self.user_client.get_entity(sender_id)
+                return await self._limited_get_entity(sender_id)
             except Exception:
                 pass
 
@@ -878,7 +976,7 @@ class TelegramParserSystem:
         if input_sender:
             logger.info("PROFILE RETRY input_sender message_id=%s", getattr(msg, "id", None))
             try:
-                return await self.user_client.get_entity(input_sender)
+                return await self._limited_get_entity(input_sender)
             except Exception:
                 pass
         return None
@@ -1017,7 +1115,7 @@ class TelegramParserSystem:
                     sender_id = getattr(msg, "sender_id", None)
                     if sender_id:
                         try:
-                            forced_entity = await self.user_client.get_entity(sender_id)
+                            forced_entity = await self._limited_get_entity(sender_id)
                             if isinstance(forced_entity, User) and self._reserve_profile(
                                 forced_entity.id, source_channel_id
                             ):
@@ -1065,14 +1163,19 @@ class TelegramParserSystem:
         linked_chat_id = getattr(entity, "linked_chat_id", None)
         if not linked_chat_id:
             try:
-                full = await self.user_client(GetFullChannelRequest(entity))
+                full = await self._limited_get_full_channel(entity)
+                if isinstance(full, tuple) and full and full[0] == "DEFERRED":
+                    return None
                 linked_chat_id = getattr(full.full_chat, "linked_chat_id", None)
             except Exception:
                 linked_chat_id = None
         if not linked_chat_id:
             return None
         try:
-            return await self.user_client.get_entity(linked_chat_id)
+            linked = await self._limited_get_entity(linked_chat_id)
+            if isinstance(linked, tuple) and linked and linked[0] == "DEFERRED":
+                return None
+            return linked
         except Exception:
             return None
 
@@ -1239,7 +1342,7 @@ class TelegramParserSystem:
             self.state.pending_approval.pop(channel_id, None)
             self._save_stage2_state()
             try:
-                entity = await self.user_client.get_entity(channel_id)
+                entity = await self._limited_get_entity(channel_id)
             except Exception:
                 entity = None
             if not entity:
