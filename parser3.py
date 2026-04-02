@@ -36,7 +36,7 @@ MIN_SUBS = 300
 MAX_SUBS = 7000
 
 # Небольшая пауза между запросами. Слишком большое значение резко режет скорость.
-DELAY = 0.08
+DELAY = 0.03
 RESOLVE_COOLDOWN_SECONDS = 0.35
 PROFILE_WORKERS = 25
 CANDIDATE_WORKERS = 4
@@ -486,13 +486,19 @@ class TelegramParserSystem:
                 entity = None
             if not entity or not isinstance(entity, Channel):
                 continue
-            await self._parse_channel_entity(owner_chat, entity, source="message", depth=depth)
-            if self.stop_requested:
-                break
-            linked = await self._resolve_linked_chat(entity)
-            if linked:
-                await self._parse_chat_entity(owner_chat, linked, depth=depth + 1)
+            task = asyncio.create_task(self._parse_channel_with_linked(owner_chat, entity, depth))
+            self._track_task(task)
             processed += 1
+
+    async def _parse_channel_with_linked(self, owner_chat: int, entity, depth: int) -> None:
+        if self.stop_requested:
+            return
+        await self._parse_channel_entity(owner_chat, entity, source="message", depth=depth)
+        if self.stop_requested:
+            return
+        linked = await self._resolve_linked_chat(entity)
+        if linked:
+            await self._parse_chat_entity(owner_chat, linked, depth=depth + 1)
 
     async def _process_candidate_task(
         self,
@@ -761,7 +767,7 @@ class TelegramParserSystem:
         if user_id in self.inflight_profiles:
             self.state.duplicate_profiles_skipped += 1
             return False
-        if now - last_check <= 1:
+        if now - last_check <= 0.3:
             self.state.duplicate_profiles_skipped += 1
             return False
         self.inflight_profiles.add(user_id)
@@ -798,6 +804,11 @@ class TelegramParserSystem:
             sender = await msg.get_sender()
         except Exception as e:
             logger.info("PROFILE SKIPPED reason=get_sender_error err=%s", e)
+            try:
+                await asyncio.sleep(0.1)
+                sender = await msg.get_sender()
+            except Exception:
+                sender = None
 
         if sender is not None:
             return sender
@@ -900,17 +911,19 @@ class TelegramParserSystem:
                     self._schedule_candidate_processing(owner_chat, candidate, source=source, depth=depth + 1)
                 if self.stop_requested:
                     break
-                if processed % 5 == 0:
+                if processed % 2 == 0:
                     await self._drain_profile_retries(owner_chat)
                 if processed % 20 == 0:
                     await self._drain_main_queue(owner_chat)
                     await self._drain_profile_retries(owner_chat)
+                if len(self.pending_tasks) > 100:
+                    await asyncio.sleep(0.05)
 
                 if new_profile_in_message:
                     no_new_profiles_streak = 0
                 else:
                     no_new_profiles_streak += 1
-                    if no_new_profiles_streak >= 3000 and processed > 3000:
+                    if no_new_profiles_streak >= 6000 and processed > 6000:
                         break
         except ChannelPrivateError:
             logger.info(
