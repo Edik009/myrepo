@@ -38,10 +38,11 @@ MAX_SUBS = 7000
 # Небольшая пауза между запросами. Слишком большое значение резко режет скорость.
 DELAY = 0.08
 RESOLVE_COOLDOWN_SECONDS = 0.08
-PROFILE_WORKERS = 5
+PROFILE_WORKERS = 15
 CANDIDATE_WORKERS = 5
 MAX_CANDIDATE_RETRIES = 3
 MAX_PROFILE_RETRIES = 2
+MAX_DEPTH = 3
 
 proxy = {
     "proxy_type": "http",
@@ -113,7 +114,7 @@ class SessionState:
     channel_limit: int = 1000
     chat_limit: int = 1000
 
-    main_queue: List[Tuple[float, int, str, str, Optional[str], int]] = field(default_factory=list)
+    main_queue: List[Tuple[float, int, str, str, Optional[str], int, int]] = field(default_factory=list)
     in_queue: Set[str] = field(default_factory=set)
     approved_queue: Deque[int] = field(default_factory=deque)
     retry_profiles: Deque[ProfileRetry] = field(default_factory=deque)
@@ -363,7 +364,13 @@ class TelegramParserSystem:
             return 0
         return 2
 
-    def _queue_add(self, username: str, approved: bool = False, channel_id: Optional[int] = None) -> None:
+    def _queue_add(
+        self,
+        username: str,
+        approved: bool = False,
+        channel_id: Optional[int] = None,
+        depth: int = 0,
+    ) -> None:
         normalized = self._normalize_username(username)
         if approved and channel_id and channel_id in self.state.approved_set:
             return
@@ -378,7 +385,7 @@ class TelegramParserSystem:
                 self.state.approved_queue.append(channel_id)
                 self._save_stage2_state()
         else:
-            self._enqueue_main_candidate(normalized, source="message", profile_url=None, attempt=0, is_retry=False)
+            self._enqueue_main_candidate(normalized, source="message", profile_url=None, attempt=0, is_retry=False, depth=depth)
 
     def _enqueue_main_candidate(
         self,
@@ -387,8 +394,11 @@ class TelegramParserSystem:
         profile_url: Optional[str],
         attempt: int = 0,
         is_retry: bool = False,
+        depth: int = 0,
     ) -> None:
         normalized = self._normalize_username(username)
+        if depth > MAX_DEPTH:
+            return
         state = self.state.username_state.get(normalized, "NEW")
         is_profile_source = source in {"bio", "attached", "profile"}
         if state == "IN_PROGRESS":
@@ -397,14 +407,17 @@ class TelegramParserSystem:
             return
         if is_retry and state in {"DONE", "IN_PROGRESS"}:
             return
-        if normalized in self.state.in_queue:
+        if normalized in self.state.in_queue and source not in {"bio", "attached"}:
             return
         if is_retry and len(self.state.main_queue) > 1000:
             logger.warning("Retry queue overflow, skipping username=%s", normalized)
             return
-        run_at = time.time() + (min(30.0, 5.0 * attempt) if is_retry else 0.0)
+        if source in {"bio", "attached"}:
+            run_at = time.time()
+        else:
+            run_at = time.time() + (min(30.0, 5.0 * attempt) if is_retry else 0.0)
         priority = self._source_priority(source, attempt)
-        heapq.heappush(self.state.main_queue, (run_at, priority, normalized, source, profile_url, attempt))
+        heapq.heappush(self.state.main_queue, (run_at, priority, normalized, source, profile_url, attempt, depth))
         self.state.in_queue.add(normalized)
         if normalized not in self.state.username_state:
             self.state.username_state[normalized] = "NEW"
@@ -413,7 +426,7 @@ class TelegramParserSystem:
         now = time.time()
         scheduled = 0
         while self.state.main_queue and scheduled < batch_size:
-            run_at, priority, username, source, profile_url, attempt = self.state.main_queue[0]
+            run_at, priority, username, source, profile_url, attempt, depth = self.state.main_queue[0]
             if run_at > now:
                 break
             heapq.heappop(self.state.main_queue)
@@ -425,6 +438,7 @@ class TelegramParserSystem:
                     source=source,
                     profile_url=profile_url,
                     attempt=attempt,
+                    depth=depth,
                 )
             )
             self._track_task(task)
@@ -437,6 +451,7 @@ class TelegramParserSystem:
         source: str,
         profile_url: Optional[str],
         attempt: int = 0,
+        depth: int = 0,
     ) -> None:
         if self.stop_requested:
             return
@@ -449,6 +464,7 @@ class TelegramParserSystem:
                 source=source,
                 profile_url=profile_url,
                 attempt=attempt,
+                depth=depth,
             )
 
     def _schedule_candidate_processing(
@@ -458,6 +474,7 @@ class TelegramParserSystem:
         source: str,
         profile_url: Optional[str] = None,
         attempt: int = 0,
+        depth: int = 0,
     ) -> None:
         if self.stop_requested:
             return
@@ -467,6 +484,7 @@ class TelegramParserSystem:
             profile_url=profile_url,
             attempt=attempt,
             is_retry=attempt > 0,
+            depth=depth,
         )
 
     async def _process_candidate(
@@ -476,6 +494,7 @@ class TelegramParserSystem:
         source: str,
         profile_url: Optional[str] = None,
         attempt: int = 0,
+        depth: int = 0,
     ) -> bool:
         username = self._normalize_username(username)
 
@@ -502,6 +521,7 @@ class TelegramParserSystem:
                     profile_url=profile_url,
                     attempt=attempt + 1,
                     is_retry=True,
+                    depth=depth,
                 )
             return False
 
@@ -519,6 +539,7 @@ class TelegramParserSystem:
                     profile_url=profile_url,
                     attempt=attempt + 1,
                     is_retry=True,
+                    depth=depth,
                 )
             return False
         self.state.username_state[username] = "DONE"
@@ -527,7 +548,7 @@ class TelegramParserSystem:
         channel_url = f"https://t.me/{normalized_username}"
         normalized_profile_url = profile_url or ""
 
-        self._queue_add(normalized_username, approved=False, channel_id=channel_id)
+        self._queue_add(normalized_username, approved=False, channel_id=channel_id, depth=depth + 1)
 
         is_new_channel = channel_id not in self.state.found_channels_all
         if is_new_channel:
@@ -560,19 +581,13 @@ class TelegramParserSystem:
                 normalized_username,
                 subs,
             )
-        if not self.stop_requested:
-            await self._parse_channel_entity(owner_chat, entity, source="message")
-            if not self.stop_requested:
-                linked = await self._resolve_linked_chat(entity)
-                if linked:
-                    await self._parse_chat_entity(owner_chat, linked)
         return is_new_channel
 
     def _enqueue_profile_retry(self, user: User, source_channel_id: Optional[int], attempt: int) -> None:
         if attempt > MAX_PROFILE_RETRIES:
             logger.info("PROFILE RETRY DROP user_id=%s reason=max_retries", getattr(user, "id", None))
             return
-        wait_seconds = min(5.0, 2.0 + attempt)
+        wait_seconds = min(30.0, 5.0 * attempt)
         self.state.retry_profiles.append(
             ProfileRetry(
                 user=user,
@@ -996,8 +1011,26 @@ class TelegramParserSystem:
         while (self.state.main_queue or self.pending_tasks) and self.state.running:
             if self.stop_requested:
                 break
+            if self.state.main_queue:
+                item = heapq.heappop(self.state.main_queue)
+                run_at, _, username, _, _, _, depth = item
+                self.state.in_queue.discard(username)
+                if run_at > time.time():
+                    heapq.heappush(self.state.main_queue, item)
+                    self.state.in_queue.add(username)
+                    await asyncio.sleep(0.1)
+                elif depth <= MAX_DEPTH:
+                    entity = await self._safe_resolve_entity(username)
+                    if entity and isinstance(entity, Channel):
+                        await self._parse_channel_entity(owner_chat, entity, source="message")
+                        if not self.stop_requested:
+                            linked = await self._resolve_linked_chat(entity)
+                            if linked:
+                                await self._parse_chat_entity(owner_chat, linked)
             await self._drain_main_queue(owner_chat, batch_size=50)
             await self._drain_profile_retries(owner_chat)
+            if len(self.pending_tasks) > 200:
+                await asyncio.sleep(0.3)
             if not self.state.main_queue and self.pending_tasks:
                 await asyncio.sleep(0.1)
 
