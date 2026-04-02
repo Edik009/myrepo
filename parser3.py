@@ -293,6 +293,9 @@ class TelegramParserSystem:
             return entity
         except FloodWaitError as e:
             logger.warning("FLOOD WAIT on resolve username=%s seconds=%s", username, e.seconds)
+            if e.seconds < 20:
+                await asyncio.sleep(e.seconds)
+                return await self._safe_resolve_entity(username)
             return None
         except (UsernameInvalidError, UsernameNotOccupiedError, InviteHashExpiredError):
             logger.info("QUEUE SKIP invalid username=%s", username)
@@ -415,7 +418,7 @@ class TelegramParserSystem:
         normalized = self._normalize_username(username)
         if depth > MAX_DEPTH:
             return
-        if normalized in self.resolve_cache:
+        if normalized in self.resolve_cache and source not in {"bio", "attached"}:
             return
         state = self.state.username_state.get(normalized, "NEW")
         is_profile_source = source in {"bio", "attached", "profile"}
@@ -470,7 +473,7 @@ class TelegramParserSystem:
         self.state.channel_parse_queue.appendleft((channel_id, depth))
         self.state.channel_parse_in_queue.add(channel_id)
 
-    async def _drain_channel_parse_queue(self, owner_chat: int, batch_size: int = 30) -> None:
+    async def _drain_channel_parse_queue(self, owner_chat: int, batch_size: int = 100) -> None:
         processed = 0
         while self.state.channel_parse_queue and processed < batch_size and not self.stop_requested:
             channel_id, depth = self.state.channel_parse_queue.popleft()
@@ -758,7 +761,7 @@ class TelegramParserSystem:
         if user_id in self.inflight_profiles:
             self.state.duplicate_profiles_skipped += 1
             return False
-        if now - last_check <= 20:
+        if now - last_check <= 5:
             self.state.duplicate_profiles_skipped += 1
             return False
         self.inflight_profiles.add(user_id)
@@ -907,7 +910,7 @@ class TelegramParserSystem:
                     no_new_profiles_streak = 0
                 else:
                     no_new_profiles_streak += 1
-                    if no_new_profiles_streak >= 1500 and processed > 1500:
+                    if no_new_profiles_streak >= 3000 and processed > 3000:
                         break
         except ChannelPrivateError:
             logger.info(
@@ -1084,7 +1087,7 @@ class TelegramParserSystem:
                 break
             await self._drain_main_queue(owner_chat, batch_size=100)
             await self._drain_profile_retries(owner_chat)
-            await self._drain_channel_parse_queue(owner_chat, batch_size=50)
+            await self._drain_channel_parse_queue(owner_chat, batch_size=100)
             if len(self.pending_tasks) > 200:
                 await asyncio.sleep(0.3)
             if not self.state.main_queue and not self.state.channel_parse_queue and self.pending_tasks:
@@ -1162,6 +1165,7 @@ class TelegramParserSystem:
             return
         logger.info("STOP REQUESTED")
         self.stop_requested = True
+        self.resolve_cache.clear()
         logger.info("STOP: cancelling %s tasks", len(self.pending_tasks))
         for task in list(self.pending_tasks):
             task.cancel()
@@ -1226,6 +1230,7 @@ class TelegramParserSystem:
         await self.bot_client.send_message(owner_chat, await self.progress_text())
         self.state.reset_runtime()
         self.resolving_now.clear()
+        self.resolve_cache.clear()
         self._save_stage2_state()
 
 
