@@ -37,9 +37,9 @@ MAX_SUBS = 7000
 
 # Небольшая пауза между запросами. Слишком большое значение резко режет скорость.
 DELAY = 0.08
-RESOLVE_COOLDOWN_SECONDS = 0.08
-PROFILE_WORKERS = 25
-CANDIDATE_WORKERS = 8
+RESOLVE_COOLDOWN_SECONDS = 0.35
+PROFILE_WORKERS = 12
+CANDIDATE_WORKERS = 4
 MAX_CANDIDATE_RETRIES = 3
 MAX_PROFILE_RETRIES = 2
 MAX_DEPTH = 3
@@ -184,8 +184,10 @@ class TelegramParserSystem:
         self.state = SessionState()
         self.profile_semaphore = asyncio.Semaphore(PROFILE_WORKERS)
         self.candidate_semaphore = asyncio.Semaphore(CANDIDATE_WORKERS)
+        self.resolve_semaphore = asyncio.Semaphore(2)
         self.inflight_profiles: Set[int] = set()
         self.resolving_now: Set[str] = set()
+        self.resolve_cache: Dict[str, object] = {}
         self.stop_requested = False
         self.pending_tasks: Set[asyncio.Task] = set()
         self.awaiting_stage2_confirmation = False
@@ -276,6 +278,8 @@ class TelegramParserSystem:
 
     async def _safe_resolve_entity(self, username: str):
         username = self._normalize_username(username)
+        if username in self.resolve_cache:
+            return self.resolve_cache[username]
         if username in self.resolving_now:
             logger.info("RESOLVE SKIPPED duplicate username=%s", username)
             return "IN_PROGRESS"
@@ -283,13 +287,12 @@ class TelegramParserSystem:
         logger.info("RESOLVE username=%s", username)
         try:
             await self._resolve_cooldown()
-            entity = await self.user_client.get_entity(username)
+            async with self.resolve_semaphore:
+                entity = await self.user_client.get_entity(username)
+            self.resolve_cache[username] = entity
             return entity
         except FloodWaitError as e:
             logger.warning("FLOOD WAIT on resolve username=%s seconds=%s", username, e.seconds)
-            if e.seconds < 60:
-                await asyncio.sleep(e.seconds)
-                return await self._safe_resolve_entity(username)
             return None
         except (UsernameInvalidError, UsernameNotOccupiedError, InviteHashExpiredError):
             logger.info("QUEUE SKIP invalid username=%s", username)
@@ -411,6 +414,8 @@ class TelegramParserSystem:
     ) -> None:
         normalized = self._normalize_username(username)
         if depth > MAX_DEPTH:
+            return
+        if normalized in self.resolve_cache:
             return
         state = self.state.username_state.get(normalized, "NEW")
         is_profile_source = source in {"bio", "attached", "profile"}
@@ -840,7 +845,6 @@ class TelegramParserSystem:
         retry_messages: List[Message] = []
         retry_seen_ids: Set[int] = set()
         no_new_profiles_streak = 0
-        window_start_found_count = len(self.state.found_channels_all)
         try:
             async for msg in self.user_client.iter_messages(entity, limit=limit):
                 if not self.state.running or self.stop_requested:
@@ -905,17 +909,6 @@ class TelegramParserSystem:
                     no_new_profiles_streak += 1
                     if no_new_profiles_streak >= 1500 and processed > 1500:
                         break
-                if source == "comment" and processed % 200 == 0:
-                    new_channels_in_window = len(self.state.found_channels_all) - window_start_found_count
-                    if new_channels_in_window < 2:
-                        logger.info(
-                            "CHAT EARLY EXIT entity_id=%s processed=%s new_channels=%s",
-                            source_channel_id,
-                            processed,
-                            new_channels_in_window,
-                        )
-                        break
-                    window_start_found_count = len(self.state.found_channels_all)
         except ChannelPrivateError:
             logger.info(
                 "MESSAGES SKIPPED private source=%s entity_id=%s",
