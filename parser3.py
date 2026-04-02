@@ -44,6 +44,7 @@ MAX_CANDIDATE_RETRIES = 3
 MAX_PROFILE_RETRIES = 5
 MAX_DEPTH = 5
 RESOLVE_TIMEOUT_SECONDS = 8
+MIN_DELAY = 1.2
 
 proxy = {
     "proxy_type": "http",
@@ -176,9 +177,9 @@ class SessionState:
 class RateLimiter:
     def __init__(self):
         self.intervals = {
-            "resolve": 0.5,
+            "resolve": 1.0,
             "full_channel": 1.0,
-            "full_user": 1.0,
+            "full_user": 0.5,
         }
         self.next_allowed: Dict[str, float] = defaultdict(float)
         self.lock = asyncio.Lock()
@@ -217,24 +218,42 @@ class TelegramParserSystem:
         self.state = SessionState()
         self.profile_semaphore = asyncio.Semaphore(PROFILE_WORKERS)
         self.candidate_semaphore = asyncio.Semaphore(CANDIDATE_WORKERS)
-        self.resolve_semaphore = asyncio.Semaphore(3)
+        self.resolve_semaphore = asyncio.Semaphore(1)
         self.channel_semaphore = asyncio.Semaphore(1)
         self.user_semaphore = asyncio.Semaphore(1)
+        self.subs_semaphore = asyncio.Semaphore(1)
+        self.profile_semaphore = asyncio.Semaphore(2)
         self.rate_limiter = RateLimiter()
         self.inflight_profiles: Set[int] = set()
         self.resolving_now: Set[str] = set()
         self.resolve_cache: Dict[str, Tuple[object, float]] = {}
+        self.subs_cache: Dict[str, int] = {}
+        self.seen_usernames: Set[str] = set()
         self.resolve_failures: Dict[str, int] = defaultdict(int)
         self.invalid_usernames: Set[str] = set()
+        self.global_pause_until: float = 0.0
+        self.last_request_time: float = 0.0
+        self.request_lock = asyncio.Lock()
         self.stop_requested = False
         self.pending_tasks: Set[asyncio.Task] = set()
         self.profile_retry_task: Optional[asyncio.Task] = None
         self.awaiting_stage2_confirmation = False
         self._load_stage2_state()
 
+    async def _before_api_request(self) -> None:
+        if time.time() < self.global_pause_until:
+            await asyncio.sleep(self.global_pause_until - time.time())
+        async with self.request_lock:
+            now = time.time()
+            sleep_time = self.last_request_time + MIN_DELAY - now
+            if sleep_time > 0:
+                await asyncio.sleep(sleep_time)
+            self.last_request_time = time.time()
+
     async def _limited_get_entity(self, target):
         while True:
             await self.rate_limiter.acquire("resolve")
+            await self._before_api_request()
             async with self.resolve_semaphore:
                 try:
                     entity = await asyncio.wait_for(
@@ -248,6 +267,8 @@ class TelegramParserSystem:
                     return None
                 except FloodWaitError as e:
                     self.rate_limiter.report_flood(e.seconds)
+                    self.global_pause_until = max(self.global_pause_until, time.time() + float(e.seconds))
+                    logger.warning("FLOOD WAIT %ss GLOBAL PAUSE", e.seconds)
                     if e.seconds < 20:
                         await asyncio.sleep(e.seconds)
                         continue
@@ -259,6 +280,7 @@ class TelegramParserSystem:
     async def _limited_get_full_channel(self, entity):
         while True:
             await self.rate_limiter.acquire("full_channel")
+            await self._before_api_request()
             async with self.channel_semaphore:
                 try:
                     full = await self.user_client(GetFullChannelRequest(entity))
@@ -266,6 +288,8 @@ class TelegramParserSystem:
                     return full
                 except FloodWaitError as e:
                     self.rate_limiter.report_flood(e.seconds)
+                    self.global_pause_until = max(self.global_pause_until, time.time() + float(e.seconds))
+                    logger.warning("FLOOD WAIT %ss GLOBAL PAUSE", e.seconds)
                     if e.seconds < 20:
                         await asyncio.sleep(e.seconds)
                         continue
@@ -274,6 +298,7 @@ class TelegramParserSystem:
     async def _limited_get_full_user(self, user):
         while True:
             await self.rate_limiter.acquire("full_user")
+            await self._before_api_request()
             async with self.user_semaphore:
                 try:
                     full = await self.user_client(GetFullUserRequest(user))
@@ -281,6 +306,8 @@ class TelegramParserSystem:
                     return full
                 except FloodWaitError as e:
                     self.rate_limiter.report_flood(e.seconds)
+                    self.global_pause_until = max(self.global_pause_until, time.time() + float(e.seconds))
+                    logger.warning("FLOOD WAIT %ss GLOBAL PAUSE", e.seconds)
                     if e.seconds < 20:
                         await asyncio.sleep(e.seconds)
                         continue
@@ -454,11 +481,16 @@ class TelegramParserSystem:
 
     async def _safe_get_subs(self, entity) -> int:
         try:
+            cache_key = self._normalize_username(getattr(entity, "username", None) or str(getattr(entity, "id", "")))
+            if cache_key in self.subs_cache:
+                return self.subs_cache[cache_key]
             await self._subs_cooldown()
-            full = await self._limited_get_full_channel(entity)
-            if isinstance(full, tuple) and full and full[0] == "DEFERRED":
-                return -1
-            subs = int(getattr(full.full_chat, "participants_count", 0) or 0)
+            async with self.subs_semaphore:
+                full = await self._limited_get_full_channel(entity)
+                if isinstance(full, tuple) and full and full[0] == "DEFERRED":
+                    return -1
+                subs = int(getattr(full.full_chat, "participants_count", 0) or 0)
+            self.subs_cache[cache_key] = subs
             logger.info("CHANNEL subs username=%s subs=%s", getattr(entity, "username", None), subs)
             return subs
         except FloodWaitError as e:
@@ -515,11 +547,13 @@ class TelegramParserSystem:
     def _source_priority(self, source: str, attempt: int) -> int:
         if attempt > 0:
             return 3
-        if source == "bio":
-            return -1
-        if source in {"attached", "profile"}:
+        if source in {"message", "comment"}:
             return 0
-        return 2
+        if source in {"attached", "profile"}:
+            return 1
+        if source == "bio":
+            return 2
+        return 3
 
     def _queue_add(
         self,
@@ -563,6 +597,10 @@ class TelegramParserSystem:
         depth: int = 0,
     ) -> None:
         normalized = self._normalize_username(username)
+        if not is_retry:
+            if normalized in self.seen_usernames:
+                return
+            self.seen_usernames.add(normalized)
         if depth > MAX_DEPTH:
             return
         cached_item = self.resolve_cache.get(normalized)
@@ -1064,6 +1102,7 @@ class TelegramParserSystem:
                 if not self.state.running or self.stop_requested:
                     break
                 processed += 1
+                await asyncio.sleep(0.3)
                 if source == "comment":
                     self.state.chat_processed_current = processed
                 else:
@@ -1322,6 +1361,7 @@ class TelegramParserSystem:
     async def run(self, owner_chat: int) -> None:
         self.state.running = True
         self.stop_requested = False
+        self.seen_usernames.clear()
         self.state.started_at = time.time()
         self.profile_retry_task = asyncio.create_task(self._profile_retry_loop(owner_chat))
 
@@ -1367,6 +1407,7 @@ class TelegramParserSystem:
     async def run_approved_only(self, owner_chat: int) -> None:
         self.state.running = True
         self.stop_requested = False
+        self.seen_usernames.clear()
         self.profile_retry_task = asyncio.create_task(self._profile_retry_loop(owner_chat))
         self.state.visited_entities.clear()
         self.state.queued_channel_ids.clear()
@@ -1488,6 +1529,7 @@ class TelegramParserSystem:
             await self.bot_client.send_message(owner_chat, "🏁 Парсинг завершён.")
         await self.bot_client.send_message(owner_chat, await self.progress_text())
         self.state.reset_runtime()
+        self.seen_usernames.clear()
         self.resolving_now.clear()
         self.resolve_cache.clear()
         self._save_stage2_state()
