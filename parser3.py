@@ -39,7 +39,7 @@ MAX_SUBS = 7000
 DELAY = 0.08
 RESOLVE_COOLDOWN_SECONDS = 0.08
 PROFILE_WORKERS = 15
-CANDIDATE_WORKERS = 5
+CANDIDATE_WORKERS = 10
 MAX_CANDIDATE_RETRIES = 3
 MAX_PROFILE_RETRIES = 2
 MAX_DEPTH = 3
@@ -370,6 +370,7 @@ class TelegramParserSystem:
         approved: bool = False,
         channel_id: Optional[int] = None,
         depth: int = 0,
+        source: str = "message",
     ) -> None:
         normalized = self._normalize_username(username)
         if approved and channel_id and channel_id in self.state.approved_set:
@@ -385,7 +386,7 @@ class TelegramParserSystem:
                 self.state.approved_queue.append(channel_id)
                 self._save_stage2_state()
         else:
-            self._enqueue_main_candidate(normalized, source="message", profile_url=None, attempt=0, is_retry=False, depth=depth)
+            self._enqueue_main_candidate(normalized, source=source, profile_url=None, attempt=0, is_retry=False, depth=depth)
 
     def _enqueue_main_candidate(
         self,
@@ -548,7 +549,13 @@ class TelegramParserSystem:
         channel_url = f"https://t.me/{normalized_username}"
         normalized_profile_url = profile_url or ""
 
-        self._queue_add(normalized_username, approved=False, channel_id=channel_id, depth=depth + 1)
+        self._queue_add(
+            normalized_username,
+            approved=False,
+            channel_id=channel_id,
+            depth=depth + 1,
+            source=source,
+        )
 
         is_new_channel = channel_id not in self.state.found_channels_all
         if is_new_channel:
@@ -581,6 +588,12 @@ class TelegramParserSystem:
                 normalized_username,
                 subs,
             )
+        if not self.stop_requested:
+            await self._parse_channel_entity(owner_chat, entity, source="message", depth=depth)
+            if not self.stop_requested:
+                linked = await self._resolve_linked_chat(entity)
+                if linked:
+                    await self._parse_chat_entity(owner_chat, linked, depth=depth)
         return is_new_channel
 
     def _enqueue_profile_retry(self, user: User, source_channel_id: Optional[int], attempt: int) -> None:
@@ -619,11 +632,18 @@ class TelegramParserSystem:
                         retry_item.user,
                         retry_item.source_channel_id,
                         attempt=retry_item.attempt,
+                        depth=0,
                     )
                 )
                 self._track_task(task)
 
-    async def _parse_profile(self, owner_chat: int, user: User, source_channel_id: Optional[int]) -> bool:
+    async def _parse_profile(
+        self,
+        owner_chat: int,
+        user: User,
+        source_channel_id: Optional[int],
+        depth: int = 0,
+    ) -> bool:
         if not user or not user.id:
             logger.info("PROFILE SKIPPED reason=invalid_user")
             return True
@@ -665,7 +685,13 @@ class TelegramParserSystem:
         if bio:
             for candidate in self._extract_candidates(bio):
                 logger.info("BIO LINK FOUND user_id=%s username=%s", user.id, candidate)
-                self._schedule_candidate_processing(owner_chat, candidate, source="bio", profile_url=profile_url)
+                self._schedule_candidate_processing(
+                    owner_chat,
+                    candidate,
+                    source="bio",
+                    profile_url=profile_url,
+                    depth=depth + 1,
+                )
 
         personal_channel_id = getattr(full_user.full_user, "personal_channel_id", None)
         if personal_channel_id:
@@ -678,6 +704,7 @@ class TelegramParserSystem:
                         entity.username,
                         source="attached",
                         profile_url=profile_url,
+                        depth=depth + 1,
                     )
             except Exception as e:
                 logger.exception("Attached channel resolve failed user_id=%s err=%s", user.id, e)
@@ -697,6 +724,7 @@ class TelegramParserSystem:
         user: User,
         source_channel_id: Optional[int],
         attempt: int = 0,
+        depth: int = 0,
     ) -> None:
         try:
             if self.stop_requested:
@@ -704,7 +732,7 @@ class TelegramParserSystem:
             async with self.profile_semaphore:
                 if self.stop_requested:
                     return
-                success = await self._parse_profile(owner_chat, user, source_channel_id)
+                success = await self._parse_profile(owner_chat, user, source_channel_id, depth=depth)
                 if not success:
                     self._enqueue_profile_retry(user, source_channel_id, attempt + 1)
         finally:
@@ -746,20 +774,26 @@ class TelegramParserSystem:
                 pass
         return None
 
-    async def _handle_sender_entity(self, owner_chat: int, msg: Message, sender) -> bool:
+    async def _handle_sender_entity(self, owner_chat: int, msg: Message, sender, depth: int = 0) -> bool:
         if isinstance(sender, Channel) and sender.username:
             sender_profile_url = f"tg://user?id={getattr(msg, 'sender_id', 0)}"
-            self._schedule_candidate_processing(owner_chat, sender.username, source="comment", profile_url=sender_profile_url)
+            self._schedule_candidate_processing(
+                owner_chat,
+                sender.username,
+                source="comment",
+                profile_url=sender_profile_url,
+                depth=depth + 1,
+            )
             return True
         if isinstance(sender, Channel):
             logger.info("PROFILE SKIPPED reason=channel_sender_without_username id=%s", sender.id)
-            await self._parse_channel_entity(owner_chat, sender, source="anonymous_comment_channel")
+            await self._parse_channel_entity(owner_chat, sender, source="anonymous_comment_channel", depth=depth + 1)
             return True
         if isinstance(sender, User):
             return False
         return False
 
-    async def _parse_messages(self, owner_chat: int, entity, limit: int, source: str) -> None:
+    async def _parse_messages(self, owner_chat: int, entity, limit: int, source: str, depth: int = 0) -> None:
         source_channel_id = getattr(entity, "id", None)
         processed = 0
         retry_messages: List[Message] = []
@@ -786,7 +820,7 @@ class TelegramParserSystem:
                 for candidate in self._extract_candidates(text):
                     if self.stop_requested:
                         break
-                    self._schedule_candidate_processing(owner_chat, candidate, source=source)
+                    self._schedule_candidate_processing(owner_chat, candidate, source=source, depth=depth + 1)
                 if self.stop_requested:
                     break
                 if processed % 20 == 0:
@@ -807,11 +841,13 @@ class TelegramParserSystem:
                             self.state.profiles_without_username_processed += 1
                         if self.stop_requested:
                             break
-                        task = asyncio.create_task(self._parse_profile_task(owner_chat, sender, source_channel_id, attempt=0))
+                        task = asyncio.create_task(
+                            self._parse_profile_task(owner_chat, sender, source_channel_id, attempt=0, depth=depth + 1)
+                        )
                         self._track_task(task)
                         new_profile_in_message = True
                 else:
-                    handled = await self._handle_sender_entity(owner_chat, msg, sender)
+                    handled = await self._handle_sender_entity(owner_chat, msg, sender, depth=depth)
                     if not handled:
                         msg_id = getattr(msg, "id", None)
                         if msg_id and msg_id not in retry_seen_ids:
@@ -871,11 +907,13 @@ class TelegramParserSystem:
                         self.state.profiles_without_username_processed += 1
                     if self.stop_requested:
                         break
-                    task = asyncio.create_task(self._parse_profile_task(owner_chat, sender, source_channel_id, attempt=0))
+                    task = asyncio.create_task(
+                        self._parse_profile_task(owner_chat, sender, source_channel_id, attempt=0, depth=depth + 1)
+                    )
                     self._track_task(task)
                 continue
 
-            handled = await self._handle_sender_entity(owner_chat, msg, sender)
+            handled = await self._handle_sender_entity(owner_chat, msg, sender, depth=depth)
             if not handled:
                 self.state.profiles_checked += 1
                 self.state.profiles_failed += 1
@@ -883,7 +921,7 @@ class TelegramParserSystem:
         await self._drain_main_queue(owner_chat)
         await self._drain_profile_retries(owner_chat)
 
-    async def _parse_channel_entity(self, owner_chat: int, entity, source: str = "message") -> None:
+    async def _parse_channel_entity(self, owner_chat: int, entity, source: str = "message", depth: int = 0) -> None:
         if self.stop_requested:
             return
         ent_id = getattr(entity, "id", None)
@@ -896,7 +934,7 @@ class TelegramParserSystem:
         logger.info("ENTITY id=%s depth=channel", ent_id)
         self.state.current_stage = "CHANNEL"
         self.state.channel_processed_current = 0
-        await self._parse_messages(owner_chat, entity, self.state.channel_limit, source=source)
+        await self._parse_messages(owner_chat, entity, self.state.channel_limit, source=source, depth=depth)
 
     async def _resolve_linked_chat(self, entity):
         linked_chat_id = getattr(entity, "linked_chat_id", None)
@@ -913,7 +951,7 @@ class TelegramParserSystem:
         except Exception:
             return None
 
-    async def _parse_chat_entity(self, owner_chat: int, entity) -> None:
+    async def _parse_chat_entity(self, owner_chat: int, entity, depth: int = 0) -> None:
         if self.stop_requested:
             return
         ent_id = getattr(entity, "id", None)
@@ -925,7 +963,7 @@ class TelegramParserSystem:
         logger.info("ENTITY id=%s depth=chat", ent_id)
         self.state.current_stage = "CHAT"
         self.state.chat_processed_current = 0
-        await self._parse_messages(owner_chat, entity, self.state.chat_limit, source="comment")
+        await self._parse_messages(owner_chat, entity, self.state.chat_limit, source="comment", depth=depth)
 
     async def _parse_channel(self, owner_chat: int, username: str) -> None:
         if self.stop_requested:
@@ -1011,22 +1049,6 @@ class TelegramParserSystem:
         while (self.state.main_queue or self.pending_tasks) and self.state.running:
             if self.stop_requested:
                 break
-            if self.state.main_queue:
-                item = heapq.heappop(self.state.main_queue)
-                run_at, _, username, _, _, _, depth = item
-                self.state.in_queue.discard(username)
-                if run_at > time.time():
-                    heapq.heappush(self.state.main_queue, item)
-                    self.state.in_queue.add(username)
-                    await asyncio.sleep(0.1)
-                elif depth <= MAX_DEPTH:
-                    entity = await self._safe_resolve_entity(username)
-                    if entity and isinstance(entity, Channel):
-                        await self._parse_channel_entity(owner_chat, entity, source="message")
-                        if not self.stop_requested:
-                            linked = await self._resolve_linked_chat(entity)
-                            if linked:
-                                await self._parse_chat_entity(owner_chat, linked)
             await self._drain_main_queue(owner_chat, batch_size=50)
             await self._drain_profile_retries(owner_chat)
             if len(self.pending_tasks) > 200:
