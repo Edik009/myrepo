@@ -38,8 +38,8 @@ MAX_SUBS = 7000
 # Небольшая пауза между запросами. Слишком большое значение резко режет скорость.
 DELAY = 0.08
 RESOLVE_COOLDOWN_SECONDS = 0.08
-PROFILE_WORKERS = 15
-CANDIDATE_WORKERS = 10
+PROFILE_WORKERS = 25
+CANDIDATE_WORKERS = 8
 MAX_CANDIDATE_RETRIES = 3
 MAX_PROFILE_RETRIES = 2
 MAX_DEPTH = 3
@@ -120,7 +120,7 @@ class SessionState:
     retry_profiles: Deque[ProfileRetry] = field(default_factory=deque)
 
     visited_entities: Set[int] = field(default_factory=set)
-    visited_profiles: Set[int] = field(default_factory=set)
+    visited_profiles: Dict[int, float] = field(default_factory=dict)
     channel_parse_queue: Deque[Tuple[int, int]] = field(default_factory=deque)
     channel_parse_in_queue: Set[int] = field(default_factory=set)
 
@@ -462,10 +462,10 @@ class TelegramParserSystem:
             return
         if channel_id in self.state.channel_parse_in_queue or channel_id in self.state.visited_entities:
             return
-        self.state.channel_parse_queue.append((channel_id, depth))
+        self.state.channel_parse_queue.appendleft((channel_id, depth))
         self.state.channel_parse_in_queue.add(channel_id)
 
-    async def _drain_channel_parse_queue(self, owner_chat: int, batch_size: int = 10) -> None:
+    async def _drain_channel_parse_queue(self, owner_chat: int, batch_size: int = 30) -> None:
         processed = 0
         while self.state.channel_parse_queue and processed < batch_size and not self.stop_requested:
             channel_id, depth = self.state.channel_parse_queue.popleft()
@@ -483,7 +483,7 @@ class TelegramParserSystem:
                 break
             linked = await self._resolve_linked_chat(entity)
             if linked:
-                await self._parse_chat_entity(owner_chat, linked, depth=depth + 1)
+                await self._parse_chat_entity(owner_chat, linked, depth=depth)
             processed += 1
 
     async def _process_candidate_task(
@@ -713,7 +713,7 @@ class TelegramParserSystem:
                     self.state.profiles_failed += 1
                     return False
 
-        self.state.visited_profiles.add(user.id)
+        self.state.visited_profiles[user.id] = time.time()
         self.state.profiles_success += 1
         logger.info("PROFILE SUCCESS user_id=%s", user.id)
         logger.info("ENTITY id=%s depth=profile", user.id)
@@ -748,7 +748,12 @@ class TelegramParserSystem:
         return True
 
     def _reserve_profile(self, user_id: int, source_channel_id: Optional[int]) -> bool:
-        if user_id in self.state.visited_profiles or user_id in self.inflight_profiles:
+        now = time.time()
+        last_check = self.state.visited_profiles.get(user_id, 0.0)
+        if user_id in self.inflight_profiles:
+            self.state.duplicate_profiles_skipped += 1
+            return False
+        if now - last_check <= 300:
             self.state.duplicate_profiles_skipped += 1
             return False
         self.inflight_profiles.add(user_id)
@@ -1085,7 +1090,7 @@ class TelegramParserSystem:
                 break
             await self._drain_main_queue(owner_chat, batch_size=50)
             await self._drain_profile_retries(owner_chat)
-            await self._drain_channel_parse_queue(owner_chat, batch_size=10)
+            await self._drain_channel_parse_queue(owner_chat, batch_size=30)
             if len(self.pending_tasks) > 200:
                 await asyncio.sleep(0.3)
             if not self.state.main_queue and not self.state.channel_parse_queue and self.pending_tasks:
