@@ -778,7 +778,7 @@ class TelegramParserSystem:
 
     def _reserve_profile(self, user_id: int, source_channel_id: Optional[int]) -> bool:
         if user_id in self.inflight_profiles:
-            return True  # РАЗРЕШАЕМ повторную обработку
+            return False
         self.inflight_profiles.add(user_id)
         return True
 
@@ -876,7 +876,6 @@ class TelegramParserSystem:
         source_channel_id = getattr(entity, "id", None)
         processed = 0
         retry_messages: List[Message] = []
-        new_retry = retry_messages
         retry_seen_ids: Set[int] = set()
         no_new_profiles_streak = 0
         try:
@@ -918,7 +917,7 @@ class TelegramParserSystem:
                         msg_id = getattr(msg, "id", None)
                         if msg_id and msg_id not in retry_seen_ids:
                             retry_seen_ids.add(msg_id)
-                            new_retry.append(msg)
+                            retry_messages.append(msg)
                             logger.info("PROFILE RETRY QUEUE ADD message_id=%s", msg_id)
                         else:
                             self.state.profiles_checked += 1
@@ -1142,7 +1141,12 @@ class TelegramParserSystem:
 
         await self.bot_client.send_message(owner_chat, "🚀 Парсинг запущен. Этап 1: стартовые каналы.")
 
-        while (self.state.main_queue or self.pending_tasks or self.state.channel_parse_queue) and self.state.running:
+        while (
+            self.state.main_queue
+            or self.pending_tasks
+            or self.state.channel_parse_queue
+            or self.state.retry_profiles
+        ) and self.state.running:
             if self.stop_requested:
                 break
             await self._drain_main_queue(owner_chat, batch_size=100)
