@@ -394,7 +394,13 @@ class TelegramParserSystem:
             await self._resolve_cooldown()
             entity = await self._limited_get_entity(username)
             if isinstance(entity, tuple) and entity and entity[0] == "DEFERRED":
-                delay_seconds = float(entity[1])
+                delay_seconds = min(60.0, float(entity[1]))
+                self.resolve_failures[username] += 1
+                if self.resolve_failures[username] >= 3:
+                    self.invalid_usernames.add(username)
+                    logger.info("RESOLVE MARK INVALID username=%s reason=deferred_limit", username)
+                    logger.info("END RESOLVE username=%s status=INVALID", username)
+                    return None
                 self.resolve_cache[username] = ("FLOOD_BLOCK", time.time() + delay_seconds)
                 logger.info("END RESOLVE username=%s status=DEFERRED", username)
                 return "DEFERRED"
@@ -414,7 +420,14 @@ class TelegramParserSystem:
             if e.seconds < 20:
                 await asyncio.sleep(e.seconds)
                 return await self._safe_resolve_entity(username)
-            self.resolve_cache[username] = ("FLOOD_BLOCK", time.time() + float(e.seconds))
+            delay_seconds = min(60.0, float(e.seconds))
+            self.resolve_failures[username] += 1
+            if self.resolve_failures[username] >= 3:
+                self.invalid_usernames.add(username)
+                logger.info("RESOLVE MARK INVALID username=%s reason=flood_deferred_limit", username)
+                logger.info("END RESOLVE username=%s status=INVALID", username)
+                return None
+            self.resolve_cache[username] = ("FLOOD_BLOCK", time.time() + delay_seconds)
             logger.info("END RESOLVE username=%s status=DEFERRED", username)
             return "DEFERRED"
         except (UsernameInvalidError, UsernameNotOccupiedError, InviteHashExpiredError):
@@ -723,14 +736,17 @@ class TelegramParserSystem:
             return False
         if entity == "DEFERRED":
             self.state.username_state[username] = "NEW"
-            self._enqueue_main_candidate(
-                username=username,
-                source=source,
-                profile_url=profile_url,
-                attempt=attempt,
-                is_retry=True,
-                depth=depth,
-            )
+            if attempt < MAX_CANDIDATE_RETRIES:
+                self._enqueue_main_candidate(
+                    username=username,
+                    source=source,
+                    profile_url=profile_url,
+                    attempt=attempt + 1,
+                    is_retry=True,
+                    depth=depth,
+                )
+            else:
+                self.state.username_state[username] = "FAILED"
             return False
         if not entity:
             self.state.username_state[username] = "FAILED"
