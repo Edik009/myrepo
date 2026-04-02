@@ -753,7 +753,7 @@ class TelegramParserSystem:
         if user_id in self.inflight_profiles:
             self.state.duplicate_profiles_skipped += 1
             return False
-        if now - last_check <= 60:
+        if now - last_check <= 20:
             self.state.duplicate_profiles_skipped += 1
             return False
         self.inflight_profiles.add(user_id)
@@ -855,22 +855,9 @@ class TelegramParserSystem:
 
                 self.state.message_count += 1
                 text = msg.raw_text or ""
-
-                for candidate in self._extract_candidates(text):
-                    if self.stop_requested:
-                        break
-                    self._schedule_candidate_processing(owner_chat, candidate, source=source, depth=depth + 1)
-                if self.stop_requested:
-                    break
-                if processed % 5 == 0:
-                    await self._drain_profile_retries(owner_chat)
-                if processed % 20 == 0:
-                    await self._drain_main_queue(owner_chat)
-                    await self._drain_profile_retries(owner_chat)
+                sender = await self._resolve_sender(msg)
 
                 new_profile_in_message = False
-
-                sender = await self._resolve_sender(msg)
                 if isinstance(sender, User):
                     is_deleted = bool(getattr(sender, "deleted", False))
                     if getattr(sender, "bot", False) or is_deleted:
@@ -900,11 +887,23 @@ class TelegramParserSystem:
                             self.state.profiles_failed += 1
                             logger.info("PROFILE FAIL message_id=%s reason=sender_unavailable", msg.id)
 
+                for candidate in self._extract_candidates(text):
+                    if self.stop_requested:
+                        break
+                    self._schedule_candidate_processing(owner_chat, candidate, source=source, depth=depth + 1)
+                if self.stop_requested:
+                    break
+                if processed % 5 == 0:
+                    await self._drain_profile_retries(owner_chat)
+                if processed % 20 == 0:
+                    await self._drain_main_queue(owner_chat)
+                    await self._drain_profile_retries(owner_chat)
+
                 if new_profile_in_message:
                     no_new_profiles_streak = 0
                 else:
                     no_new_profiles_streak += 1
-                    if no_new_profiles_streak >= 800 and processed > 800:
+                    if no_new_profiles_streak >= 1500 and processed > 1500:
                         break
                 if source == "comment" and processed % 200 == 0:
                     new_channels_in_window = len(self.state.found_channels_all) - window_start_found_count
@@ -1092,7 +1091,7 @@ class TelegramParserSystem:
                 break
             await self._drain_main_queue(owner_chat, batch_size=100)
             await self._drain_profile_retries(owner_chat)
-            await self._drain_channel_parse_queue(owner_chat, batch_size=30)
+            await self._drain_channel_parse_queue(owner_chat, batch_size=50)
             if len(self.pending_tasks) > 200:
                 await asyncio.sleep(0.3)
             if not self.state.main_queue and not self.state.channel_parse_queue and self.pending_tasks:
@@ -1137,7 +1136,7 @@ class TelegramParserSystem:
         while self.state.approved_queue and self.state.running:
             if self.stop_requested:
                 break
-            channel_id = self.state.approved_queue.pop()  # DFS
+            channel_id = self.state.approved_queue.popleft()
             self.state.approved_set.discard(channel_id)
             self.state.stage2_processed_channels += 1
             self.state.pending_approval.pop(channel_id, None)
