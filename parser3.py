@@ -178,7 +178,7 @@ class RateLimiter:
     def __init__(self):
         self.intervals = {
             "resolve": 1.0,
-            "full_channel": 1.0,
+            "full_channel": 1.5,
             "full_user": 0.5,
         }
         self.next_allowed: Dict[str, float] = defaultdict(float)
@@ -257,6 +257,7 @@ class TelegramParserSystem:
             await self._before_api_request()
             async with self.resolve_semaphore:
                 try:
+                    logger.info("START RESOLVE username=%s", target)
                     entity = await asyncio.wait_for(
                         self.user_client.get_entity(target),
                         timeout=RESOLVE_TIMEOUT_SECONDS,
@@ -428,7 +429,6 @@ class TelegramParserSystem:
             logger.info("RESOLVE SKIPPED duplicate username=%s", username)
             return "IN_PROGRESS"
         self.resolving_now.add(username)
-        logger.info("START RESOLVE username=%s", username)
         try:
             await self._resolve_cooldown()
             entity = await self._limited_get_entity(username)
