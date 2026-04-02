@@ -190,6 +190,7 @@ class TelegramParserSystem:
         self.resolve_cache: Dict[str, object] = {}
         self.stop_requested = False
         self.pending_tasks: Set[asyncio.Task] = set()
+        self.profile_retry_task: Optional[asyncio.Task] = None
         self.awaiting_stage2_confirmation = False
         self._load_stage2_state()
 
@@ -433,7 +434,9 @@ class TelegramParserSystem:
         if is_retry and len(self.state.main_queue) > 1000:
             logger.warning("Retry queue overflow, skipping username=%s", normalized)
             return
-        if source in {"bio", "attached"}:
+        if source == "bio":
+            run_at = time.time() - 1
+        elif source == "attached":
             run_at = time.time()
         else:
             run_at = time.time() + (min(30.0, 5.0 * attempt) if is_retry else 0.0)
@@ -498,7 +501,8 @@ class TelegramParserSystem:
             return
         linked = await self._resolve_linked_chat(entity)
         if linked:
-            await self._parse_chat_entity(owner_chat, linked, depth=depth + 1)
+            task = asyncio.create_task(self._parse_chat_entity(owner_chat, linked, depth=depth + 1))
+            self._track_task(task)
 
     async def _process_candidate_task(
         self,
@@ -767,7 +771,7 @@ class TelegramParserSystem:
         if user_id in self.inflight_profiles:
             self.state.duplicate_profiles_skipped += 1
             return False
-        if now - last_check <= 0.3:
+        if now - last_check <= 0.1:
             self.state.duplicate_profiles_skipped += 1
             return False
         self.inflight_profiles.add(user_id)
@@ -797,6 +801,11 @@ class TelegramParserSystem:
     def _track_task(self, task: asyncio.Task) -> None:
         self.pending_tasks.add(task)
         task.add_done_callback(self.pending_tasks.discard)
+
+    async def _profile_retry_loop(self, owner_chat: int) -> None:
+        while self.state.running and not self.stop_requested:
+            await self._drain_profile_retries(owner_chat)
+            await asyncio.sleep(0.2)
 
     async def _resolve_sender(self, msg: Message):
         sender = None
@@ -885,6 +894,7 @@ class TelegramParserSystem:
                         self.state.unique_profiles_processed += 1
                         if not getattr(sender, "username", None):
                             self.state.profiles_without_username_processed += 1
+                            self._enqueue_profile_retry(sender, source_channel_id, attempt=0)
                         if self.stop_requested:
                             break
                         task = asyncio.create_task(
@@ -916,8 +926,8 @@ class TelegramParserSystem:
                 if processed % 20 == 0:
                     await self._drain_main_queue(owner_chat)
                     await self._drain_profile_retries(owner_chat)
-                if len(self.pending_tasks) > 100:
-                    await asyncio.sleep(0.05)
+                while len(self.pending_tasks) > 80:
+                    await asyncio.sleep(0.02)
 
                 if new_profile_in_message:
                     no_new_profiles_streak = 0
@@ -1092,6 +1102,7 @@ class TelegramParserSystem:
         self.state.running = True
         self.stop_requested = False
         self.state.started_at = time.time()
+        self.profile_retry_task = asyncio.create_task(self._profile_retry_loop(owner_chat))
 
         await self.bot_client.send_message(owner_chat, "🚀 Парсинг запущен. Этап 1: стартовые каналы.")
 
@@ -1125,6 +1136,7 @@ class TelegramParserSystem:
     async def run_approved_only(self, owner_chat: int) -> None:
         self.state.running = True
         self.stop_requested = False
+        self.profile_retry_task = asyncio.create_task(self._profile_retry_loop(owner_chat))
         self.state.visited_entities.clear()
         self.state.queued_channel_ids.clear()
         self.state.message_count = 0
@@ -1179,9 +1191,9 @@ class TelegramParserSystem:
         logger.info("STOP REQUESTED")
         self.stop_requested = True
         self.resolve_cache.clear()
-        logger.info("STOP: cancelling %s tasks", len(self.pending_tasks))
-        for task in list(self.pending_tasks):
-            task.cancel()
+        logger.info("STOP: awaiting %s tasks", len(self.pending_tasks))
+        if self.pending_tasks:
+            await asyncio.gather(*list(self.pending_tasks), return_exceptions=True)
         await self.bot_client.send_message(owner_chat, "⛔ Останавливаю...")
 
     async def progress_text(self) -> str:
@@ -1219,6 +1231,10 @@ class TelegramParserSystem:
 
     async def finish(self, owner_chat: int) -> None:
         self.state.running = False
+        if self.profile_retry_task:
+            self.profile_retry_task.cancel()
+            await asyncio.gather(self.profile_retry_task, return_exceptions=True)
+            self.profile_retry_task = None
 
         for _ in range(3):
             await self._drain_main_queue(owner_chat)
