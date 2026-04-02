@@ -120,7 +120,9 @@ class SessionState:
     retry_profiles: Deque[ProfileRetry] = field(default_factory=deque)
 
     visited_entities: Set[int] = field(default_factory=set)
-    visited_profiles: Set[Tuple[int, Optional[int]]] = field(default_factory=set)
+    visited_profiles: Set[int] = field(default_factory=set)
+    channel_parse_queue: Deque[Tuple[int, int]] = field(default_factory=deque)
+    channel_parse_in_queue: Set[int] = field(default_factory=set)
 
     found_channels_all: Dict[int, FoundChannel] = field(default_factory=dict)
     found_channels_filtered: Dict[int, FoundChannel] = field(default_factory=dict)
@@ -155,6 +157,8 @@ class SessionState:
         self.retry_profiles.clear()
         self.visited_entities.clear()
         self.visited_profiles.clear()
+        self.channel_parse_queue.clear()
+        self.channel_parse_in_queue.clear()
         self.found_channels_all.clear()
         self.found_channels_filtered.clear()
         self.username_state.clear()
@@ -180,7 +184,7 @@ class TelegramParserSystem:
         self.state = SessionState()
         self.profile_semaphore = asyncio.Semaphore(PROFILE_WORKERS)
         self.candidate_semaphore = asyncio.Semaphore(CANDIDATE_WORKERS)
-        self.inflight_profiles: Set[Tuple[int, Optional[int]]] = set()
+        self.inflight_profiles: Set[int] = set()
         self.resolving_now: Set[str] = set()
         self.stop_requested = False
         self.pending_tasks: Set[asyncio.Task] = set()
@@ -371,6 +375,7 @@ class TelegramParserSystem:
         channel_id: Optional[int] = None,
         depth: int = 0,
         source: str = "message",
+        profile_url: Optional[str] = None,
     ) -> None:
         normalized = self._normalize_username(username)
         if approved and channel_id and channel_id in self.state.approved_set:
@@ -386,7 +391,14 @@ class TelegramParserSystem:
                 self.state.approved_queue.append(channel_id)
                 self._save_stage2_state()
         else:
-            self._enqueue_main_candidate(normalized, source=source, profile_url=None, attempt=0, is_retry=False, depth=depth)
+            self._enqueue_main_candidate(
+                normalized,
+                source=source,
+                profile_url=profile_url,
+                attempt=0,
+                is_retry=False,
+                depth=depth,
+            )
 
     def _enqueue_main_candidate(
         self,
@@ -444,6 +456,35 @@ class TelegramParserSystem:
             )
             self._track_task(task)
             scheduled += 1
+
+    def _schedule_channel_for_parsing(self, channel_id: int, depth: int) -> None:
+        if depth > MAX_DEPTH:
+            return
+        if channel_id in self.state.channel_parse_in_queue or channel_id in self.state.visited_entities:
+            return
+        self.state.channel_parse_queue.append((channel_id, depth))
+        self.state.channel_parse_in_queue.add(channel_id)
+
+    async def _drain_channel_parse_queue(self, owner_chat: int, batch_size: int = 10) -> None:
+        processed = 0
+        while self.state.channel_parse_queue and processed < batch_size and not self.stop_requested:
+            channel_id, depth = self.state.channel_parse_queue.popleft()
+            self.state.channel_parse_in_queue.discard(channel_id)
+            if depth > MAX_DEPTH:
+                continue
+            try:
+                entity = await self.user_client.get_entity(channel_id)
+            except Exception:
+                entity = None
+            if not entity or not isinstance(entity, Channel):
+                continue
+            await self._parse_channel_entity(owner_chat, entity, source="message", depth=depth)
+            if self.stop_requested:
+                break
+            linked = await self._resolve_linked_chat(entity)
+            if linked:
+                await self._parse_chat_entity(owner_chat, linked, depth=depth + 1)
+            processed += 1
 
     async def _process_candidate_task(
         self,
@@ -555,6 +596,7 @@ class TelegramParserSystem:
             channel_id=channel_id,
             depth=depth + 1,
             source=source,
+            profile_url=normalized_profile_url,
         )
 
         is_new_channel = channel_id not in self.state.found_channels_all
@@ -588,12 +630,7 @@ class TelegramParserSystem:
                 normalized_username,
                 subs,
             )
-        if not self.stop_requested:
-            await self._parse_channel_entity(owner_chat, entity, source="message", depth=depth)
-            if not self.stop_requested:
-                linked = await self._resolve_linked_chat(entity)
-                if linked:
-                    await self._parse_chat_entity(owner_chat, linked, depth=depth)
+        self._schedule_channel_for_parsing(channel_id, depth + 1)
         return is_new_channel
 
     def _enqueue_profile_retry(self, user: User, source_channel_id: Optional[int], attempt: int) -> None:
@@ -676,7 +713,7 @@ class TelegramParserSystem:
                     self.state.profiles_failed += 1
                     return False
 
-        self.state.visited_profiles.add((user.id, source_channel_id))
+        self.state.visited_profiles.add(user.id)
         self.state.profiles_success += 1
         logger.info("PROFILE SUCCESS user_id=%s", user.id)
         logger.info("ENTITY id=%s depth=profile", user.id)
@@ -711,11 +748,10 @@ class TelegramParserSystem:
         return True
 
     def _reserve_profile(self, user_id: int, source_channel_id: Optional[int]) -> bool:
-        profile_key = (user_id, source_channel_id)
-        if profile_key in self.state.visited_profiles or profile_key in self.inflight_profiles:
+        if user_id in self.state.visited_profiles or user_id in self.inflight_profiles:
             self.state.duplicate_profiles_skipped += 1
             return False
-        self.inflight_profiles.add(profile_key)
+        self.inflight_profiles.add(user_id)
         return True
 
     async def _parse_profile_task(
@@ -737,7 +773,7 @@ class TelegramParserSystem:
                     self._enqueue_profile_retry(user, source_channel_id, attempt + 1)
         finally:
             if user and user.id:
-                self.inflight_profiles.discard((user.id, source_channel_id))
+                self.inflight_profiles.discard(user.id)
 
     def _track_task(self, task: asyncio.Task) -> None:
         self.pending_tasks.add(task)
@@ -801,7 +837,7 @@ class TelegramParserSystem:
         no_new_profiles_streak = 0
         window_start_found_count = len(self.state.found_channels_all)
         try:
-            async for msg in self.user_client.iter_messages(entity, limit=None):
+            async for msg in self.user_client.iter_messages(entity, limit=limit):
                 if not self.state.running or self.stop_requested:
                     break
                 processed += 1
@@ -809,8 +845,6 @@ class TelegramParserSystem:
                     self.state.chat_processed_current = processed
                 else:
                     self.state.channel_processed_current = processed
-                if processed >= limit:
-                    break
                 if not isinstance(msg, Message):
                     continue
 
@@ -1046,14 +1080,15 @@ class TelegramParserSystem:
 
         await self.bot_client.send_message(owner_chat, "🚀 Парсинг запущен. Этап 1: стартовые каналы.")
 
-        while (self.state.main_queue or self.pending_tasks) and self.state.running:
+        while (self.state.main_queue or self.pending_tasks or self.state.channel_parse_queue) and self.state.running:
             if self.stop_requested:
                 break
             await self._drain_main_queue(owner_chat, batch_size=50)
             await self._drain_profile_retries(owner_chat)
+            await self._drain_channel_parse_queue(owner_chat, batch_size=10)
             if len(self.pending_tasks) > 200:
                 await asyncio.sleep(0.3)
-            if not self.state.main_queue and self.pending_tasks:
+            if not self.state.main_queue and not self.state.channel_parse_queue and self.pending_tasks:
                 await asyncio.sleep(0.1)
 
         if not self.stop_requested:
@@ -1172,10 +1207,11 @@ class TelegramParserSystem:
         for _ in range(3):
             await self._drain_main_queue(owner_chat)
             await self._drain_profile_retries(owner_chat)
+            await self._drain_channel_parse_queue(owner_chat)
             if self.pending_tasks:
                 await asyncio.gather(*list(self.pending_tasks), return_exceptions=True)
                 self.pending_tasks.clear()
-            if not self.state.main_queue and not self.state.retry_profiles:
+            if not self.state.main_queue and not self.state.retry_profiles and not self.state.channel_parse_queue:
                 break
         await asyncio.sleep(1)
         while self.pending_tasks:
@@ -1343,6 +1379,8 @@ async def main() -> None:
             system.awaiting_stage2_confirmation = False
             system.state.main_queue.clear()
             system.state.in_queue.clear()
+            system.state.channel_parse_queue.clear()
+            system.state.channel_parse_in_queue.clear()
             await event.answer("Запускаю этап 2")
             if system.state.approved_queue and not system.state.running:
                 asyncio.create_task(system.run_approved_only(event.chat_id))
