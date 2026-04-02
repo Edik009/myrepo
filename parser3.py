@@ -231,6 +231,7 @@ class TelegramParserSystem:
         self.seen_usernames: Set[str] = set()
         self.resolve_failures: Dict[str, int] = defaultdict(int)
         self.invalid_usernames: Set[str] = set()
+        self.profile_retry_count: Dict[int, int] = defaultdict(int)
         self.global_pause_until: float = 0.0
         self.last_request_time: float = 0.0
         self.request_lock = asyncio.Lock()
@@ -261,20 +262,27 @@ class TelegramParserSystem:
                         timeout=RESOLVE_TIMEOUT_SECONDS,
                     )
                     self.rate_limiter.report_success()
+                    await asyncio.sleep(0.5)
                     return entity
                 except asyncio.TimeoutError:
                     logger.warning("RESOLVE TIMEOUT target=%s", target)
+                    await asyncio.sleep(0.5)
                     return None
                 except FloodWaitError as e:
                     self.rate_limiter.report_flood(e.seconds)
-                    self.global_pause_until = max(self.global_pause_until, time.time() + float(e.seconds))
-                    logger.warning("FLOOD WAIT %ss GLOBAL PAUSE", e.seconds)
+                    if e.seconds > 60:
+                        self.global_pause_until = max(self.global_pause_until, time.time() + float(e.seconds))
+                        logger.warning("GLOBAL PAUSE %ss", e.seconds)
+                        await asyncio.sleep(0.5)
+                        return ("DEFERRED", e.seconds)
                     if e.seconds < 20:
                         await asyncio.sleep(e.seconds)
                         continue
+                    await asyncio.sleep(0.5)
                     return ("DEFERRED", e.seconds)
                 except Exception as e:
                     logger.warning("RESOLVE ERROR target=%s err=%s", target, e)
+                    await asyncio.sleep(0.5)
                     return None
 
     async def _limited_get_full_channel(self, entity):
@@ -288,8 +296,10 @@ class TelegramParserSystem:
                     return full
                 except FloodWaitError as e:
                     self.rate_limiter.report_flood(e.seconds)
-                    self.global_pause_until = max(self.global_pause_until, time.time() + float(e.seconds))
-                    logger.warning("FLOOD WAIT %ss GLOBAL PAUSE", e.seconds)
+                    if e.seconds > 60:
+                        self.global_pause_until = max(self.global_pause_until, time.time() + float(e.seconds))
+                        logger.warning("GLOBAL PAUSE %ss", e.seconds)
+                        return ("DEFERRED", e.seconds)
                     if e.seconds < 20:
                         await asyncio.sleep(e.seconds)
                         continue
@@ -306,8 +316,10 @@ class TelegramParserSystem:
                     return full
                 except FloodWaitError as e:
                     self.rate_limiter.report_flood(e.seconds)
-                    self.global_pause_until = max(self.global_pause_until, time.time() + float(e.seconds))
-                    logger.warning("FLOOD WAIT %ss GLOBAL PAUSE", e.seconds)
+                    if e.seconds > 60:
+                        self.global_pause_until = max(self.global_pause_until, time.time() + float(e.seconds))
+                        logger.warning("GLOBAL PAUSE %ss", e.seconds)
+                        return ("DEFERRED", e.seconds)
                     if e.seconds < 20:
                         await asyncio.sleep(e.seconds)
                         continue
@@ -433,9 +445,8 @@ class TelegramParserSystem:
                 return "DEFERRED"
             if not entity:
                 self.resolve_failures[username] += 1
-                if self.resolve_failures[username] >= 3:
-                    self.invalid_usernames.add(username)
-                    logger.info("RESOLVE MARK INVALID username=%s", username)
+                self.invalid_usernames.add(username)
+                logger.info("RESOLVE MARK INVALID username=%s", username)
                 logger.info("END RESOLVE username=%s status=NONE", username)
                 return None
             self.resolve_failures.pop(username, None)
@@ -492,6 +503,7 @@ class TelegramParserSystem:
                 subs = int(getattr(full.full_chat, "participants_count", 0) or 0)
             self.subs_cache[cache_key] = subs
             logger.info("CHANNEL subs username=%s subs=%s", getattr(entity, "username", None), subs)
+            await asyncio.sleep(0.5)
             return subs
         except FloodWaitError as e:
             logger.warning("FLOOD WAIT on subs seconds=%s", e.seconds)
@@ -598,7 +610,7 @@ class TelegramParserSystem:
     ) -> None:
         normalized = self._normalize_username(username)
         if not is_retry:
-            if normalized in self.seen_usernames:
+            if normalized in self.seen_usernames and not profile_url:
                 return
             self.seen_usernames.add(normalized)
         if depth > MAX_DEPTH:
@@ -877,6 +889,12 @@ class TelegramParserSystem:
         return is_new_channel
 
     def _enqueue_profile_retry(self, user: User, source_channel_id: Optional[int], attempt: int, depth: int) -> None:
+        user_id = getattr(user, "id", None)
+        if not user_id:
+            return
+        if self.profile_retry_count[user_id] >= 1:
+            return
+        self.profile_retry_count[user_id] += 1
         if attempt > MAX_PROFILE_RETRIES:
             logger.info("PROFILE RETRY DROP user_id=%s reason=max_retries", getattr(user, "id", None))
             return
@@ -993,6 +1011,7 @@ class TelegramParserSystem:
                     self._schedule_channel_for_parsing(entity.id, depth + 1)
             except Exception as e:
                 logger.exception("Attached channel resolve failed user_id=%s err=%s", user.id, e)
+        await asyncio.sleep(0.5)
         return True
 
     def _reserve_profile(self, user_id: int, source_channel_id: Optional[int]) -> bool:
@@ -1138,7 +1157,6 @@ class TelegramParserSystem:
                         if msg_id and msg_id not in retry_seen_ids:
                             retry_seen_ids.add(msg_id)
                             retry_messages.append(msg)
-                            logger.info("PROFILE RETRY QUEUE ADD message_id=%s", msg_id)
                         else:
                             self.state.profiles_checked += 1
                             self.state.profiles_failed += 1
@@ -1363,7 +1381,7 @@ class TelegramParserSystem:
         self.stop_requested = False
         self.seen_usernames.clear()
         self.state.started_at = time.time()
-        self.profile_retry_task = asyncio.create_task(self._profile_retry_loop(owner_chat))
+        self.profile_retry_task = None
 
         await self.bot_client.send_message(owner_chat, "🚀 Парсинг запущен. Этап 1: стартовые каналы.")
 
@@ -1408,7 +1426,7 @@ class TelegramParserSystem:
         self.state.running = True
         self.stop_requested = False
         self.seen_usernames.clear()
-        self.profile_retry_task = asyncio.create_task(self._profile_retry_loop(owner_chat))
+        self.profile_retry_task = None
         self.state.visited_entities.clear()
         self.state.queued_channel_ids.clear()
         self.state.message_count = 0
