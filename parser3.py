@@ -580,10 +580,9 @@ class TelegramParserSystem:
         if approved and channel_id and channel_id in self.state.approved_set:
             return
         if channel_id and channel_id in self.state.queued_channel_ids and not profile_url:
-            pass  # НЕ пропускаем, продолжаем обработку
+            return
         if channel_id:
             self.state.queued_channel_ids.add(channel_id)
-        logger.info("QUEUE ADD username=%s approved=%s", username, approved)
         if approved:
             if channel_id:
                 self.state.approved_set.add(channel_id)
@@ -610,7 +609,7 @@ class TelegramParserSystem:
     ) -> None:
         normalized = self._normalize_username(username)
         if not is_retry:
-            if normalized in self.seen_usernames and not profile_url:
+            if normalized in self.seen_usernames:
                 return
             self.seen_usernames.add(normalized)
         if depth > MAX_DEPTH:
