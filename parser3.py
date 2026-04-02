@@ -209,20 +209,20 @@ class RateLimiter:
 # Parser
 # =========================
 class TelegramParserSystem:
-    URL_PATTERN = re.compile(r"https?://t\.me/([A-Za-z0-9_+/]+)", re.IGNORECASE)
+    URL_PATTERN = re.compile(r"(?:https?://)?t\.me/([A-Za-z0-9_+/]+)", re.IGNORECASE)
+    TG_RESOLVE_PATTERN = re.compile(r"tg://resolve\?domain=([A-Za-z0-9_]{4,})", re.IGNORECASE)
     MENTION_PATTERN = re.compile(r"@([A-Za-z0-9_]{5,})")
 
     def __init__(self, user_client: TelegramClient, bot_client: TelegramClient):
         self.user_client = user_client
         self.bot_client = bot_client
         self.state = SessionState()
-        self.profile_semaphore = asyncio.Semaphore(PROFILE_WORKERS)
         self.candidate_semaphore = asyncio.Semaphore(CANDIDATE_WORKERS)
         self.resolve_semaphore = asyncio.Semaphore(1)
         self.channel_semaphore = asyncio.Semaphore(1)
         self.user_semaphore = asyncio.Semaphore(1)
         self.subs_semaphore = asyncio.Semaphore(1)
-        self.profile_semaphore = asyncio.Semaphore(2)
+        self.profile_semaphore = asyncio.Semaphore(PROFILE_WORKERS)
         self.rate_limiter = RateLimiter()
         self.inflight_profiles: Set[int] = set()
         self.resolving_now: Set[str] = set()
@@ -405,9 +405,36 @@ class TelegramParserSystem:
         out: Set[str] = set()
         for match in self.URL_PATTERN.findall(text):
             out.add(self._normalize_username(match))
+        for match in self.TG_RESOLVE_PATTERN.findall(text):
+            out.add(self._normalize_username(match))
         for mention in self.MENTION_PATTERN.findall(text):
             out.add(self._normalize_username(mention))
+        out = {x for x in out if x and not self._is_trash_username(x)}
         return out
+
+    def _extract_candidates_from_message(self, msg: Message) -> Set[str]:
+        out = set(self._extract_candidates(msg.raw_text or ""))
+
+        entities = getattr(msg, "entities", None) or []
+        for entity in entities:
+            for attr in ("url",):
+                value = getattr(entity, attr, None)
+                if isinstance(value, str):
+                    out.update(self._extract_candidates(value))
+            user_obj = getattr(entity, "user_id", None)
+            if isinstance(user_obj, User) and getattr(user_obj, "username", None):
+                out.add(self._normalize_username(user_obj.username))
+
+        reply_markup = getattr(msg, "reply_markup", None)
+        rows = getattr(reply_markup, "rows", None) or []
+        for row in rows:
+            buttons = getattr(row, "buttons", None) or []
+            for button in buttons:
+                button_url = getattr(button, "url", None)
+                if isinstance(button_url, str):
+                    out.update(self._extract_candidates(button_url))
+
+        return {x for x in out if x and not self._is_trash_username(x)}
 
     async def _safe_resolve_entity(self, username: str):
         username = self._normalize_username(username)
@@ -711,9 +738,11 @@ class TelegramParserSystem:
         linked = await self._resolve_linked_chat(entity)
         if linked:
             await self._parse_chat_entity(owner_chat, linked, depth=depth + 1)
-            if self.stop_requested:
-                return
-        await self._parse_channel_entity(owner_chat, entity, source="message", depth=depth)
+            return
+        logger.info(
+            "ENTITY id=%s depth=chat skipped=no_linked_chat",
+            getattr(entity, "id", None),
+        )
 
     async def _process_candidate_task(
         self,
@@ -967,6 +996,8 @@ class TelegramParserSystem:
         for collection in candidate_collections:
             values = collection if isinstance(collection, (list, tuple, set)) else [collection]
             for item in values:
+                if getattr(item, "anonymous", False) or getattr(item, "hidden", False):
+                    continue
                 add_sender(getattr(item, "sender_id", 0))
                 add_sender(getattr(item, "from_id", 0))
                 add_sender(getattr(item, "user_id", 0))
@@ -1036,7 +1067,7 @@ class TelegramParserSystem:
 
         gift_sender_ids = self._extract_gift_sender_ids(full_user)
         if gift_sender_ids:
-            for gift_sender_id in gift_sender_ids[:5]:
+            for gift_sender_id in gift_sender_ids:
                 try:
                     sender_entity = await self._limited_get_entity(gift_sender_id)
                 except Exception:
@@ -1193,8 +1224,6 @@ class TelegramParserSystem:
 
                 self.state.message_count += 1
                 sender = await self._resolve_sender(msg)
-                text = msg.raw_text or ""
-
                 new_profile_in_message = False
                 if isinstance(sender, User):
                     is_deleted = bool(getattr(sender, "deleted", False))
@@ -1224,7 +1253,7 @@ class TelegramParserSystem:
                             self.state.profiles_failed += 1
                             logger.info("PROFILE FAIL message_id=%s reason=sender_unavailable", msg.id)
 
-                for candidate in self._extract_candidates(text):
+                for candidate in self._extract_candidates_from_message(msg):
                     if self.stop_requested:
                         break
                     self._schedule_candidate_processing(owner_chat, candidate, source=source, depth=depth + 1)
