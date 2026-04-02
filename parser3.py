@@ -43,6 +43,7 @@ CANDIDATE_WORKERS = 15
 MAX_CANDIDATE_RETRIES = 3
 MAX_PROFILE_RETRIES = 5
 MAX_DEPTH = 5
+RESOLVE_TIMEOUT_SECONDS = 8
 
 proxy = {
     "proxy_type": "http",
@@ -216,13 +217,15 @@ class TelegramParserSystem:
         self.state = SessionState()
         self.profile_semaphore = asyncio.Semaphore(PROFILE_WORKERS)
         self.candidate_semaphore = asyncio.Semaphore(CANDIDATE_WORKERS)
-        self.resolve_semaphore = asyncio.Semaphore(2)
+        self.resolve_semaphore = asyncio.Semaphore(3)
         self.channel_semaphore = asyncio.Semaphore(1)
         self.user_semaphore = asyncio.Semaphore(1)
         self.rate_limiter = RateLimiter()
         self.inflight_profiles: Set[int] = set()
         self.resolving_now: Set[str] = set()
         self.resolve_cache: Dict[str, Tuple[object, float]] = {}
+        self.resolve_failures: Dict[str, int] = defaultdict(int)
+        self.invalid_usernames: Set[str] = set()
         self.stop_requested = False
         self.pending_tasks: Set[asyncio.Task] = set()
         self.profile_retry_task: Optional[asyncio.Task] = None
@@ -234,15 +237,24 @@ class TelegramParserSystem:
             await self.rate_limiter.acquire("resolve")
             async with self.resolve_semaphore:
                 try:
-                    entity = await self.user_client.get_entity(target)
+                    entity = await asyncio.wait_for(
+                        self.user_client.get_entity(target),
+                        timeout=RESOLVE_TIMEOUT_SECONDS,
+                    )
                     self.rate_limiter.report_success()
                     return entity
+                except asyncio.TimeoutError:
+                    logger.warning("RESOLVE TIMEOUT target=%s", target)
+                    return None
                 except FloodWaitError as e:
                     self.rate_limiter.report_flood(e.seconds)
                     if e.seconds < 20:
                         await asyncio.sleep(e.seconds)
                         continue
                     return ("DEFERRED", e.seconds)
+                except Exception as e:
+                    logger.warning("RESOLVE ERROR target=%s err=%s", target, e)
+                    return None
 
     async def _limited_get_full_channel(self, entity):
         while True:
@@ -359,6 +371,9 @@ class TelegramParserSystem:
 
     async def _safe_resolve_entity(self, username: str):
         username = self._normalize_username(username)
+        if username in self.invalid_usernames:
+            logger.info("RESOLVE SKIP invalid_cached username=%s", username)
+            return None
         cached_item = self.resolve_cache.get(username)
         if cached_item:
             cached_entity, cached_ts = cached_item
@@ -374,15 +389,25 @@ class TelegramParserSystem:
             logger.info("RESOLVE SKIPPED duplicate username=%s", username)
             return "IN_PROGRESS"
         self.resolving_now.add(username)
-        logger.info("RESOLVE username=%s", username)
+        logger.info("START RESOLVE username=%s", username)
         try:
             await self._resolve_cooldown()
             entity = await self._limited_get_entity(username)
             if isinstance(entity, tuple) and entity and entity[0] == "DEFERRED":
                 delay_seconds = float(entity[1])
                 self.resolve_cache[username] = ("FLOOD_BLOCK", time.time() + delay_seconds)
+                logger.info("END RESOLVE username=%s status=DEFERRED", username)
                 return "DEFERRED"
+            if not entity:
+                self.resolve_failures[username] += 1
+                if self.resolve_failures[username] >= 3:
+                    self.invalid_usernames.add(username)
+                    logger.info("RESOLVE MARK INVALID username=%s", username)
+                logger.info("END RESOLVE username=%s status=NONE", username)
+                return None
+            self.resolve_failures.pop(username, None)
             self.resolve_cache[username] = (entity, time.time())
+            logger.info("END RESOLVE username=%s status=OK", username)
             return entity
         except FloodWaitError as e:
             logger.warning("FLOOD WAIT on resolve username=%s seconds=%s", username, e.seconds)
@@ -390,15 +415,26 @@ class TelegramParserSystem:
                 await asyncio.sleep(e.seconds)
                 return await self._safe_resolve_entity(username)
             self.resolve_cache[username] = ("FLOOD_BLOCK", time.time() + float(e.seconds))
+            logger.info("END RESOLVE username=%s status=DEFERRED", username)
             return "DEFERRED"
         except (UsernameInvalidError, UsernameNotOccupiedError, InviteHashExpiredError):
             logger.info("QUEUE SKIP invalid username=%s", username)
+            self.invalid_usernames.add(username)
+            logger.info("END RESOLVE username=%s status=INVALID", username)
             return None
         except ValueError:
             logger.info("QUEUE SKIP unresolved username=%s", username)
+            self.resolve_failures[username] += 1
+            if self.resolve_failures[username] >= 3:
+                self.invalid_usernames.add(username)
+            logger.info("END RESOLVE username=%s status=VALUE_ERROR", username)
             return None
         except Exception as e:
             logger.exception("Resolve failed username=%s err=%s", username, e)
+            self.resolve_failures[username] += 1
+            if self.resolve_failures[username] >= 3:
+                self.invalid_usernames.add(username)
+            logger.info("END RESOLVE username=%s status=ERROR", username)
             return None
         finally:
             self.resolving_now.discard(username)
