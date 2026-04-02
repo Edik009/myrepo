@@ -445,8 +445,9 @@ class TelegramParserSystem:
                 return "DEFERRED"
             if not entity:
                 self.resolve_failures[username] += 1
-                self.invalid_usernames.add(username)
-                logger.info("RESOLVE MARK INVALID username=%s", username)
+                if self.resolve_failures[username] >= 3:
+                    self.invalid_usernames.add(username)
+                    logger.info("RESOLVE MARK INVALID username=%s", username)
                 logger.info("END RESOLVE username=%s status=NONE", username)
                 return None
             self.resolve_failures.pop(username, None)
@@ -707,13 +708,12 @@ class TelegramParserSystem:
     async def _parse_channel_with_linked(self, owner_chat: int, entity, depth: int) -> None:
         if self.stop_requested:
             return
-        await self._parse_channel_entity(owner_chat, entity, source="message", depth=depth)
-        if self.stop_requested:
-            return
         linked = await self._resolve_linked_chat(entity)
         if linked:
-            task = asyncio.create_task(self._parse_chat_entity(owner_chat, linked, depth=depth + 1))
-            self._track_task(task)
+            await self._parse_chat_entity(owner_chat, linked, depth=depth + 1)
+            if self.stop_requested:
+                return
+        await self._parse_channel_entity(owner_chat, entity, source="message", depth=depth)
 
     async def _process_candidate_task(
         self,
@@ -936,6 +936,45 @@ class TelegramParserSystem:
             )
             self._track_task(task)
 
+    @staticmethod
+    def _extract_gift_sender_ids(full_user) -> List[int]:
+        sender_ids: Set[int] = set()
+
+        def add_sender(value) -> None:
+            try:
+                sender_id = int(value)
+            except Exception:
+                return
+            if sender_id > 0:
+                sender_ids.add(sender_id)
+
+        def from_peer(peer) -> None:
+            if peer is None:
+                return
+            add_sender(getattr(peer, "user_id", 0))
+            add_sender(getattr(peer, "channel_id", 0))
+
+        full_user_obj = getattr(full_user, "full_user", None)
+        candidate_collections = []
+        for source in (full_user_obj, full_user):
+            if not source:
+                continue
+            for attr in ("gifts", "saved_gifts", "profile_gifts", "gift_items"):
+                items = getattr(source, attr, None)
+                if items:
+                    candidate_collections.append(items)
+
+        for collection in candidate_collections:
+            values = collection if isinstance(collection, (list, tuple, set)) else [collection]
+            for item in values:
+                add_sender(getattr(item, "sender_id", 0))
+                add_sender(getattr(item, "from_id", 0))
+                add_sender(getattr(item, "user_id", 0))
+                from_peer(getattr(item, "peer", None))
+                from_peer(getattr(item, "from_peer", None))
+
+        return list(sender_ids)
+
     async def _parse_profile(
         self,
         owner_chat: int,
@@ -994,6 +1033,29 @@ class TelegramParserSystem:
                     profile_url=profile_url,
                     depth=depth + 1,
                 )
+
+        gift_sender_ids = self._extract_gift_sender_ids(full_user)
+        if gift_sender_ids:
+            for gift_sender_id in gift_sender_ids[:5]:
+                try:
+                    sender_entity = await self._limited_get_entity(gift_sender_id)
+                except Exception:
+                    sender_entity = None
+                if isinstance(sender_entity, User) and self._reserve_profile(sender_entity.id, source_channel_id):
+                    self.state.profiles_checked += 1
+                    self.state.unique_profiles_processed += 1
+                    if not getattr(sender_entity, "username", None):
+                        self.state.profiles_without_username_processed += 1
+                    task = asyncio.create_task(
+                        self._parse_profile_task(
+                            owner_chat,
+                            sender_entity,
+                            source_channel_id,
+                            attempt=0,
+                            depth=depth + 1,
+                        )
+                    )
+                    self._track_task(task)
 
         personal_channel_id = getattr(full_user.full_user, "personal_channel_id", None)
         if personal_channel_id:
