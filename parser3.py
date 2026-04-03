@@ -32,8 +32,8 @@ ADMIN_ID = 8674344477
 USER_SESSION = os.getenv("TG_USER_SESSION", "user_parser")
 BOT_SESSION = os.getenv("TG_BOT_SESSION", "bot_controller")
 
-MIN_SUBS = 300
-MAX_SUBS = 7000
+MIN_SUBS = 0
+MAX_SUBS = 1000000
 
 # Небольшая пауза между запросами. Слишком большое значение резко режет скорость.
 DELAY = 0.03
@@ -840,6 +840,7 @@ class TelegramParserSystem:
             return False
         self.state.username_state[username] = "IN_PROGRESS"
         entity = await self._safe_resolve_entity(username)
+        logger.info("ENTITY TYPE username=%s type=%s", username, type(entity).__name__ if entity else "None")
         if entity == "IN_PROGRESS":
             self.state.username_state[username] = "NEW"
             if attempt < MAX_CANDIDATE_RETRIES:
@@ -948,6 +949,7 @@ class TelegramParserSystem:
             self.state.found_count = len(self.state.found_channels_all)
 
         if MIN_SUBS <= subs <= MAX_SUBS:
+            logger.info("CHANNEL PASSED FILTER username=%s subs=%s", normalized_username, subs)
             if channel_id not in self.state.found_channels_filtered:
                 self.state.found_channels_filtered[channel_id] = self.state.found_channels_all[channel_id]
                 self.state.found_filtered_count = len(self.state.found_channels_filtered)
