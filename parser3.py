@@ -234,7 +234,6 @@ class TelegramParserSystem:
         self.seen_usernames: Set[str] = set()
         self.resolve_failures: Dict[str, int] = defaultdict(int)
         self.invalid_usernames: Set[str] = set()
-        self.raw_notified_usernames: Set[str] = set()
         self.profile_retry_count: Dict[int, int] = defaultdict(int)
         self.global_pause_until: float = 0.0
         self.last_request_time: float = 0.0
@@ -798,30 +797,6 @@ class TelegramParserSystem:
                 depth=depth,
             )
 
-    async def _send_raw_detect_channel(
-        self,
-        owner_chat: int,
-        username: str,
-        source: str,
-        profile_url: Optional[str] = None,
-    ) -> None:
-        normalized = self._normalize_username(username)
-        if not normalized or self._is_trash_username(normalized):
-            return
-        if normalized in self.raw_notified_usernames:
-            return
-        self.raw_notified_usernames.add(normalized)
-        try:
-            await self._send_found_channel(
-                owner_chat,
-                normalized,
-                subs=0,
-                source="raw_detect",
-                profile_url=profile_url,
-            )
-        except Exception as e:
-            logger.exception("RAW DETECT notify failed username=%s err=%s", normalized, e)
-
     def _schedule_candidate_processing(
         self,
         owner_chat: int,
@@ -834,16 +809,6 @@ class TelegramParserSystem:
         if self.stop_requested:
             return
         normalized = self._normalize_username(username)
-        if source in {"bio", "attached", "comment"} and normalized and not self._is_trash_username(normalized):
-            task = asyncio.create_task(
-                self._send_raw_detect_channel(
-                    owner_chat=owner_chat,
-                    username=normalized,
-                    source=source,
-                    profile_url=profile_url,
-                )
-            )
-            self._track_task(task)
         self._enqueue_main_candidate(
             username=normalized,
             source=source,
@@ -928,25 +893,20 @@ class TelegramParserSystem:
         if not isinstance(entity, Channel):
             self.state.username_state[username] = "FAILED"
             return False
+        if getattr(entity, "bot", False):
+            self.state.username_state[username] = "FAILED"
+            return False
 
         channel_id = int(getattr(entity, "id", 0) or 0)
         normalized_username = self._normalize_username(getattr(entity, "username", None) or username)
+        if not normalized_username:
+            self.state.username_state[username] = "FAILED"
+            return False
+        if profile_url and "tg://user" in profile_url.lower():
+            self.state.username_state[username] = "FAILED"
+            return False
         channel_url = f"https://t.me/{normalized_username}"
         normalized_profile_url = profile_url or ""
-
-        if source != "seed" and channel_id not in self.state.pending_approval:
-            self.state.pending_approval[channel_id] = normalized_username
-            self._save_stage2_state()
-            if normalized_username not in self.raw_notified_usernames:
-                self.raw_notified_usernames.add(normalized_username)
-                await self._send_found_channel(
-                    owner_chat,
-                    normalized_username,
-                    0,
-                    "raw_detect",
-                    channel_id=channel_id,
-                    profile_url=normalized_profile_url,
-                )
 
         subs = await self._safe_get_subs(entity)
         if subs < 0:
@@ -961,8 +921,9 @@ class TelegramParserSystem:
                     depth=depth,
                 )
             return False
-        if subs <= 0:
-            subs = 0
+        if subs < 50:
+            self.state.username_state[username] = "FAILED"
+            return False
         self.state.username_state[username] = "DONE"
 
         self._queue_add(
@@ -998,6 +959,17 @@ class TelegramParserSystem:
                 MAX_SUBS,
             )
 
+        if source != "seed" and channel_id not in self.state.pending_approval:
+            self.state.pending_approval[channel_id] = normalized_username
+            self._save_stage2_state()
+            await self._send_found_channel(
+                owner_chat,
+                normalized_username,
+                subs,
+                source,
+                channel_id=channel_id,
+                profile_url=normalized_profile_url,
+            )
         self._schedule_channel_for_parsing(channel_id, depth + 1)
         return is_new_channel
 
@@ -1584,7 +1556,6 @@ class TelegramParserSystem:
         self.state.running = True
         self.stop_requested = False
         self.seen_usernames.clear()
-        self.raw_notified_usernames.clear()
         self.state.started_at = time.time()
         self.profile_retry_task = None
 
@@ -1631,7 +1602,6 @@ class TelegramParserSystem:
         self.state.running = True
         self.stop_requested = False
         self.seen_usernames.clear()
-        self.raw_notified_usernames.clear()
         self.profile_retry_task = None
         self.state.visited_entities.clear()
         self.state.queued_channel_ids.clear()
@@ -1755,7 +1725,6 @@ class TelegramParserSystem:
         await self.bot_client.send_message(owner_chat, await self.progress_text())
         self.state.reset_runtime()
         self.seen_usernames.clear()
-        self.raw_notified_usernames.clear()
         self.resolving_now.clear()
         self.resolve_cache.clear()
         self._save_stage2_state()
