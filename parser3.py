@@ -922,6 +922,9 @@ class TelegramParserSystem:
                     depth=depth,
                 )
             return False
+        if subs < 50:
+            self.state.username_state[username] = "FAILED"
+            return False
         self.state.username_state[username] = "DONE"
 
         self._queue_add(
