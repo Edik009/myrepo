@@ -42,6 +42,7 @@ PROFILE_WORKERS = 6
 CANDIDATE_WORKERS = 2
 MAX_CANDIDATE_RETRIES = 3
 MAX_PROFILE_RETRIES = 5
+PROFILE_FETCH_ATTEMPTS = 4
 MAX_DEPTH = 5
 RESOLVE_FAIL_INVALID_THRESHOLD = 10
 RESOLVE_TIMEOUT_SECONDS = 8
@@ -1046,7 +1047,6 @@ class TelegramParserSystem:
                 self.state.retry_profiles.append(retry_item)
                 continue
             self.state.profiles_checked += 1
-            self.state.unique_profiles_processed += 1
             if not getattr(retry_item.user, "username", None):
                 self.state.profiles_without_username_processed += 1
             task = asyncio.create_task(
@@ -1117,11 +1117,19 @@ class TelegramParserSystem:
         profile_url = f"https://t.me/{user.username}" if user.username else f"tg://user?id={user.id}"
 
         full_user = None
-        for attempt in range(1, 3):
+        for attempt in range(1, PROFILE_FETCH_ATTEMPTS + 1):
             try:
                 full_user = await self._limited_get_full_user(user)
                 if isinstance(full_user, tuple) and full_user and full_user[0] == "DEFERRED":
                     self._enqueue_profile_retry(user, source_channel_id, attempt, depth)
+                    return False
+                if not full_user or not getattr(full_user, "full_user", None):
+                    logger.info("PROFILE PARTIAL user_id=%s attempt=%s", user.id, attempt)
+                    if attempt < PROFILE_FETCH_ATTEMPTS:
+                        await asyncio.sleep(0.4)
+                        continue
+                    self.state.profiles_failed += 1
+                    logger.info("PROFILE FAIL user_id=%s reason=partial_response", user.id)
                     return False
                 break
             except FloodWaitError as e:
@@ -1141,9 +1149,10 @@ class TelegramParserSystem:
             except Exception as e:
                 logger.info("PROFILE FAIL user_id=%s reason=exception attempt=%s", user.id, attempt)
                 logger.exception("Failed profile user_id=%s err=%s", user.id, e)
-                if attempt >= 2:
+                if attempt >= PROFILE_FETCH_ATTEMPTS:
                     self.state.profiles_failed += 1
                     return False
+                await asyncio.sleep(0.4)
 
         self.state.visited_profiles[user.id] = time.time()
         self.state.profiles_success += 1
