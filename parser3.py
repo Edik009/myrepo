@@ -615,6 +615,34 @@ class TelegramParserSystem:
             ],
         )
 
+    async def _register_channel_for_approval(
+        self,
+        owner_chat: int,
+        channel_id: int,
+        username: str,
+        subs: int,
+        source: str,
+        profile_url: str = "",
+    ) -> None:
+        if source == "seed":
+            return
+        if channel_id not in self.state.pending_approval:
+            self.state.pending_approval[channel_id] = username
+            self._save_stage2_state()
+        if channel_id in self.sent_channel_ids:
+            logger.info("SKIP SEND reason=duplicate or invalid")
+            return
+        logger.info("SENDING CHANNEL username=%s subs=%s", username, subs)
+        await self._send_found_channel(
+            owner_chat,
+            username,
+            subs,
+            source,
+            channel_id=channel_id,
+            profile_url=profile_url,
+        )
+        self.sent_channel_ids.add(channel_id)
+
     def _source_priority(self, source: str, attempt: int) -> int:
         if attempt > 0:
             return 3
@@ -967,22 +995,14 @@ class TelegramParserSystem:
             if channel_id not in self.state.found_channels_filtered:
                 self.state.found_channels_filtered[channel_id] = self.state.found_channels_all[channel_id]
                 self.state.found_filtered_count = len(self.state.found_channels_filtered)
-                if source != "seed":
-                    self.state.pending_approval[channel_id] = normalized_username
-                    self._save_stage2_state()
-                    if channel_id not in self.sent_channel_ids:
-                        logger.info("SENDING CHANNEL username=%s subs=%s", normalized_username, subs)
-                        await self._send_found_channel(
-                            owner_chat,
-                            normalized_username,
-                            subs,
-                            source,
-                            channel_id=channel_id,
-                            profile_url=normalized_profile_url,
-                        )
-                        self.sent_channel_ids.add(channel_id)
-                    else:
-                        logger.info("SKIP SEND reason=duplicate or invalid")
+            await self._register_channel_for_approval(
+                owner_chat=owner_chat,
+                channel_id=channel_id,
+                username=normalized_username,
+                subs=subs,
+                source=source,
+                profile_url=normalized_profile_url,
+            )
         else:
             logger.info(
                 "CHANNEL OUTSIDE FILTER username=%s subs=%s filter=[%s,%s]",
@@ -1188,6 +1208,15 @@ class TelegramParserSystem:
                         if MIN_SUBS <= subs <= MAX_SUBS:
                             self.state.found_channels_filtered[channel_id] = self.state.found_channels_all[channel_id]
                             self.state.found_filtered_count = len(self.state.found_channels_filtered)
+                            if attached_username:
+                                await self._register_channel_for_approval(
+                                    owner_chat=owner_chat,
+                                    channel_id=channel_id,
+                                    username=attached_username,
+                                    subs=subs,
+                                    source="attached",
+                                    profile_url=profile_url,
+                                )
                     if attached_username:
                         self._schedule_candidate_processing(
                             owner_chat,
