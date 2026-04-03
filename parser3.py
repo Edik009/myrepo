@@ -1125,15 +1125,39 @@ class TelegramParserSystem:
             logger.info("PROFILE HAS ATTACHED CHANNEL user_id=%s channel_id=%s", user.id, personal_channel_id)
             try:
                 entity = await self._limited_get_entity(personal_channel_id)
-                if isinstance(entity, Channel) and entity.username:
-                    self._schedule_candidate_processing(
-                        owner_chat,
-                        entity.username,
-                        source="attached",
-                        profile_url=profile_url,
-                        depth=depth + 1,
-                    )
-                    self._schedule_channel_for_parsing(entity.id, depth + 1)
+                if isinstance(entity, Channel):
+                    channel_id = int(getattr(entity, "id", 0) or 0)
+                    attached_username = self._normalize_username(getattr(entity, "username", None) or "")
+                    subs = await self._safe_get_subs(entity)
+                    if subs > 0 and channel_id and channel_id not in self.state.found_channels_all:
+                        channel_url = f"https://t.me/{attached_username}" if attached_username else f"channel_id:{channel_id}"
+                        self.state.found_channels_all[channel_id] = FoundChannel(
+                            channel_id=channel_id,
+                            username=attached_username or str(channel_id),
+                            url=channel_url,
+                            subs=subs,
+                            source="attached",
+                            profile_url=profile_url,
+                        )
+                        self.state.found_count = len(self.state.found_channels_all)
+                        if MIN_SUBS <= subs <= MAX_SUBS:
+                            self.state.found_channels_filtered[channel_id] = self.state.found_channels_all[channel_id]
+                            self.state.found_filtered_count = len(self.state.found_channels_filtered)
+                    if attached_username:
+                        self._schedule_candidate_processing(
+                            owner_chat,
+                            attached_username,
+                            source="attached",
+                            profile_url=profile_url,
+                            depth=depth + 1,
+                        )
+                    else:
+                        logger.info(
+                            "ATTACHED CHANNEL WITHOUT USERNAME user_id=%s channel_id=%s counted=yes",
+                            user.id,
+                            channel_id,
+                        )
+                    self._schedule_channel_for_parsing(channel_id, depth + 1)
             except Exception as e:
                 logger.exception("Attached channel resolve failed user_id=%s err=%s", user.id, e)
         await asyncio.sleep(0.5)
