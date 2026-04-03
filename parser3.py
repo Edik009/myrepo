@@ -698,6 +698,10 @@ class TelegramParserSystem:
         depth: int = 0,
     ) -> None:
         normalized = self._normalize_username(username)
+        if normalized.isdigit():
+            state = self.state.username_state.get(normalized)
+            if state in {"IN_PROGRESS", "DONE", "FAILED"} or normalized in self.state.in_queue:
+                return
         if not is_retry:
             if normalized in self.seen_usernames and source not in {"bio", "attached"}:
                 return
