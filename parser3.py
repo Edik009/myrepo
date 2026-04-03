@@ -230,10 +230,12 @@ class TelegramParserSystem:
         self.inflight_profiles: Set[int] = set()
         self.resolving_now: Set[str] = set()
         self.resolve_cache: Dict[str, Tuple[object, float]] = {}
+        self.entity_cache_by_id: Dict[int, object] = {}
         self.subs_cache: Dict[str, int] = {}
         self.seen_usernames: Set[str] = set()
         self.resolve_failures: Dict[str, int] = defaultdict(int)
         self.invalid_usernames: Set[str] = set()
+        self.sent_channel_ids: Set[int] = set()
         self.profile_retry_count: Dict[int, int] = defaultdict(int)
         self.global_pause_until: float = 0.0
         self.last_request_time: float = 0.0
@@ -505,6 +507,9 @@ class TelegramParserSystem:
                 return None
             self.resolve_failures.pop(username, None)
             self.resolve_cache[username] = (entity, time.time())
+            entity_id = int(getattr(entity, "id", 0) or 0)
+            if entity_id:
+                self.entity_cache_by_id[entity_id] = entity
             logger.info("END RESOLVE username=%s status=OK", username)
             return entity
         except FloodWaitError as e:
@@ -839,7 +844,21 @@ class TelegramParserSystem:
         if current_state == "IN_PROGRESS":
             return False
         self.state.username_state[username] = "IN_PROGRESS"
-        entity = await self._safe_resolve_entity(username)
+        if username.isdigit():
+            target_id = int(username)
+            entity = self.entity_cache_by_id.get(target_id)
+            if entity is None:
+                try:
+                    entity = await self._limited_get_entity(target_id)
+                    if isinstance(entity, tuple) and entity and entity[0] == "DEFERRED":
+                        entity = "DEFERRED"
+                    elif entity:
+                        self.entity_cache_by_id[target_id] = entity
+                except Exception as e:
+                    logger.info("ENTITY BY ID FAIL id=%s err=%s", target_id, e)
+                    entity = None
+        else:
+            entity = await self._safe_resolve_entity(username)
         logger.info("ENTITY TYPE username=%s type=%s", username, type(entity).__name__ if entity else "None")
         if entity == "IN_PROGRESS":
             self.state.username_state[username] = "NEW"
@@ -867,17 +886,6 @@ class TelegramParserSystem:
             else:
                 self.state.username_state[username] = "FAILED"
             return False
-        if not entity and username.isdigit():
-            try:
-                fallback_entity = await self._limited_get_entity(int(username))
-                if isinstance(fallback_entity, tuple) and fallback_entity and fallback_entity[0] == "DEFERRED":
-                    fallback_entity = None
-                if fallback_entity:
-                    entity = fallback_entity
-                    logger.info("RESOLVE FALLBACK BY CHANNEL_ID target=%s status=OK", username)
-            except Exception as e:
-                logger.info("RESOLVE FALLBACK BY CHANNEL_ID target=%s status=FAIL err=%s", username, e)
-
         if not entity:
             self.state.username_state[username] = "FAILED"
             if attempt < MAX_CANDIDATE_RETRIES:
@@ -892,18 +900,26 @@ class TelegramParserSystem:
             return False
 
         if not isinstance(entity, Channel):
+            logger.info("SKIP SEND reason=duplicate or invalid")
             self.state.username_state[username] = "FAILED"
             return False
         if getattr(entity, "bot", False):
+            logger.info("SKIP SEND reason=duplicate or invalid")
+            self.state.username_state[username] = "FAILED"
+            return False
+        if not bool(getattr(entity, "broadcast", False) or getattr(entity, "megagroup", False)):
+            logger.info("SKIP SEND reason=duplicate or invalid")
             self.state.username_state[username] = "FAILED"
             return False
 
         channel_id = int(getattr(entity, "id", 0) or 0)
         normalized_username = self._normalize_username(getattr(entity, "username", None) or username)
         if not normalized_username:
+            logger.info("SKIP SEND reason=duplicate or invalid")
             self.state.username_state[username] = "FAILED"
             return False
         if profile_url and "tg://user" in profile_url.lower():
+            logger.info("SKIP SEND reason=duplicate or invalid")
             self.state.username_state[username] = "FAILED"
             return False
         channel_url = f"https://t.me/{normalized_username}"
@@ -922,10 +938,8 @@ class TelegramParserSystem:
                     depth=depth,
                 )
             return False
-        if subs < 50:
-            self.state.username_state[username] = "FAILED"
-            return False
         self.state.username_state[username] = "DONE"
+        logger.info("CHANNEL READY TO SEND username=%s subs=%s source=%s", normalized_username, subs, source)
 
         self._queue_add(
             normalized_username,
@@ -956,15 +970,19 @@ class TelegramParserSystem:
                 if source != "seed":
                     self.state.pending_approval[channel_id] = normalized_username
                     self._save_stage2_state()
-                    logger.info("SEND CHANNEL username=%s subs=%s", normalized_username, subs)
-                    await self._send_found_channel(
-                        owner_chat,
-                        normalized_username,
-                        subs,
-                        source,
-                        channel_id=channel_id,
-                        profile_url=normalized_profile_url,
-                    )
+                    if channel_id not in self.sent_channel_ids:
+                        logger.info("SENDING CHANNEL username=%s subs=%s", normalized_username, subs)
+                        await self._send_found_channel(
+                            owner_chat,
+                            normalized_username,
+                            subs,
+                            source,
+                            channel_id=channel_id,
+                            profile_url=normalized_profile_url,
+                        )
+                        self.sent_channel_ids.add(channel_id)
+                    else:
+                        logger.info("SKIP SEND reason=duplicate or invalid")
         else:
             logger.info(
                 "CHANNEL OUTSIDE FILTER username=%s subs=%s filter=[%s,%s]",
@@ -1559,6 +1577,7 @@ class TelegramParserSystem:
         self.state.running = True
         self.stop_requested = False
         self.seen_usernames.clear()
+        self.sent_channel_ids.clear()
         self.state.started_at = time.time()
         self.profile_retry_task = None
 
@@ -1605,6 +1624,7 @@ class TelegramParserSystem:
         self.state.running = True
         self.stop_requested = False
         self.seen_usernames.clear()
+        self.sent_channel_ids.clear()
         self.profile_retry_task = None
         self.state.visited_entities.clear()
         self.state.queued_channel_ids.clear()
@@ -1728,8 +1748,10 @@ class TelegramParserSystem:
         await self.bot_client.send_message(owner_chat, await self.progress_text())
         self.state.reset_runtime()
         self.seen_usernames.clear()
+        self.sent_channel_ids.clear()
         self.resolving_now.clear()
         self.resolve_cache.clear()
+        self.entity_cache_by_id.clear()
         self._save_stage2_state()
 
 
