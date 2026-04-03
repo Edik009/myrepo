@@ -32,8 +32,8 @@ ADMIN_ID = 8674344477
 USER_SESSION = os.getenv("TG_USER_SESSION", "user_parser")
 BOT_SESSION = os.getenv("TG_BOT_SESSION", "bot_controller")
 
-MIN_SUBS = 0
-MAX_SUBS = 1000000
+MIN_SUBS = 300
+MAX_SUBS = 7000
 
 # Небольшая пауза между запросами. Слишком большое значение резко режет скорость.
 DELAY = 0.03
@@ -629,6 +629,9 @@ class TelegramParserSystem:
         if channel_id not in self.state.pending_approval:
             self.state.pending_approval[channel_id] = username
             self._save_stage2_state()
+        if not (MIN_SUBS <= subs <= MAX_SUBS):
+            logger.info("SKIP SEND reason=outside_filter subs=%s filter=[%s,%s]", subs, MIN_SUBS, MAX_SUBS)
+            return
         if channel_id in self.sent_channel_ids:
             logger.info("SKIP SEND reason=duplicate or invalid")
             return
@@ -943,10 +946,6 @@ class TelegramParserSystem:
         channel_id = int(getattr(entity, "id", 0) or 0)
         normalized_username = self._normalize_username(getattr(entity, "username", None) or username)
         if not normalized_username:
-            logger.info("SKIP SEND reason=duplicate or invalid")
-            self.state.username_state[username] = "FAILED"
-            return False
-        if profile_url and "tg://user" in profile_url.lower():
             logger.info("SKIP SEND reason=duplicate or invalid")
             self.state.username_state[username] = "FAILED"
             return False
