@@ -947,28 +947,29 @@ class TelegramParserSystem:
             )
             self.state.found_count = len(self.state.found_channels_all)
 
-        if MIN_SUBS <= subs <= MAX_SUBS and channel_id not in self.state.found_channels_filtered:
-            self.state.found_channels_filtered[channel_id] = self.state.found_channels_all[channel_id]
-            self.state.found_filtered_count = len(self.state.found_channels_filtered)
-        elif not (MIN_SUBS <= subs <= MAX_SUBS):
+        if MIN_SUBS <= subs <= MAX_SUBS:
+            if channel_id not in self.state.found_channels_filtered:
+                self.state.found_channels_filtered[channel_id] = self.state.found_channels_all[channel_id]
+                self.state.found_filtered_count = len(self.state.found_channels_filtered)
+                if source != "seed":
+                    self.state.pending_approval[channel_id] = normalized_username
+                    self._save_stage2_state()
+                    logger.info("SEND CHANNEL username=%s subs=%s", normalized_username, subs)
+                    await self._send_found_channel(
+                        owner_chat,
+                        normalized_username,
+                        subs,
+                        source,
+                        channel_id=channel_id,
+                        profile_url=normalized_profile_url,
+                    )
+        else:
             logger.info(
                 "CHANNEL OUTSIDE FILTER username=%s subs=%s filter=[%s,%s]",
                 normalized_username,
                 subs,
                 MIN_SUBS,
                 MAX_SUBS,
-            )
-
-        if source != "seed" and channel_id not in self.state.pending_approval:
-            self.state.pending_approval[channel_id] = normalized_username
-            self._save_stage2_state()
-            await self._send_found_channel(
-                owner_chat,
-                normalized_username,
-                subs,
-                source,
-                channel_id=channel_id,
-                profile_url=normalized_profile_url,
             )
         self._schedule_channel_for_parsing(channel_id, depth + 1)
         return is_new_channel
