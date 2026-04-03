@@ -609,11 +609,10 @@ class TelegramParserSystem:
             chat_id,
             text,
             buttons=[
-                [
-                    Button.inline("✅ Парсить потом", CALLBACK_PARSE + callback_value.encode()),
-                    Button.inline("❌ Не парсить", CALLBACK_SKIP + callback_value.encode()),
-                ]
+                Button.inline("✅ Парсить потом", CALLBACK_PARSE + callback_value.encode()),
+                Button.inline("❌ Не парсить", CALLBACK_SKIP + callback_value.encode()),
             ],
+            link_preview=False,
         )
 
     async def _register_channel_for_approval(
@@ -1248,8 +1247,10 @@ class TelegramParserSystem:
 
     def _reserve_profile(self, user_id: int, source_channel_id: Optional[int]) -> bool:
         if user_id in self.state.visited_profiles:
+            self.state.duplicate_profiles_skipped += 1
             return False
         if user_id in self.inflight_profiles:
+            self.state.duplicate_profiles_skipped += 1
             return False
         self.inflight_profiles.add(user_id)
         return True
@@ -1735,26 +1736,37 @@ class TelegramParserSystem:
                 f"Обработано: {processed}\n"
                 f"Осталось: {left}"
             )
+
+        visited_profiles_count = len(self.state.visited_profiles)
+        inflight_profiles_count = len(self.inflight_profiles)
+        pending_profile_retries = len(self.state.retry_profiles)
+        pending_channel_parse = len(self.state.channel_parse_queue)
+
         return (
             f"⏱ Время: {elapsed} сек\n"
             f"📨 Сообщений: {self.state.message_count}\n"
             f"🔥 Каналов (всего): {self.state.found_count}\n"
             f"🎯 Каналов (300–7000): {self.state.found_filtered_count}\n"
-            f"📦 Очередь: {len(self.state.main_queue)}\n"
-            f"🟡 В работе: {sum(1 for v in self.state.username_state.values() if v == 'IN_PROGRESS')}\n"
-            f"✅ Done: {sum(1 for v in self.state.username_state.values() if v == 'DONE')}\n"
-            f"❌ Failed: {sum(1 for v in self.state.username_state.values() if v == 'FAILED')}\n"
+            f"📦 Очередь кандидатов: {len(self.state.main_queue)}\n"
+            f"🧵 Задач в работе: {len(self.pending_tasks)}\n"
+            f"🟡 Username IN_PROGRESS: {sum(1 for v in self.state.username_state.values() if v == 'IN_PROGRESS')}\n"
+            f"✅ Username DONE: {sum(1 for v in self.state.username_state.values() if v == 'DONE')}\n"
+            f"❌ Username FAILED: {sum(1 for v in self.state.username_state.values() if v == 'FAILED')}\n"
             f"🧭 Этап: {self.state.current_stage}\n"
             f"📡 Канал: {self.state.channel_processed_current}/{self.state.channel_limit}\n"
             f"💬 Чат: {self.state.chat_processed_current}/{self.state.chat_limit}\n"
-            f"👤 Профили проверено: {self.state.profiles_checked}\n"
+            f"👤 Профили проверено (все попытки): {self.state.profiles_checked}\n"
             f"✅ Профили успешно: {self.state.profiles_success}\n"
             f"❌ Профили ошибок: {self.state.profiles_failed}\n"
-            f"🆕 Уникальные профили: {self.state.unique_profiles_processed}\n"
+            f"🆕 Уникальные профили (факт): {visited_profiles_count}\n"
             f"♻️ Дубликаты пропущены: {self.state.duplicate_profiles_skipped}\n"
+            f"🕒 Профилей в обработке: {inflight_profiles_count}\n"
+            f"🔁 Ретраи профилей в очереди: {pending_profile_retries}\n"
+            f"📚 Очередь парсинга каналов/чатов: {pending_channel_parse}\n"
             f"🪪 Без username обработано: {self.state.profiles_without_username_processed}"
             f"{stage2_extra}"
         )
+
 
     async def finish(self, owner_chat: int) -> None:
         self.state.running = False
