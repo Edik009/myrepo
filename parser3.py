@@ -2055,6 +2055,11 @@ async def main() -> None:
             try:
                 if auth_flow.waiting_for == "phone":
                     auth_flow.phone = text
+                    if auth_flow.temp_client:
+                        try:
+                            await auth_flow.temp_client.disconnect()
+                        except Exception:
+                            logger.exception("AUTH FLOW failed to disconnect stale temp client before phone step")
                     auth_flow.temp_client = TelegramClient(auth_flow.session_name, API_ID, API_HASH, proxy=proxy)
                     await auth_flow.temp_client.connect()
                     logger.info("AUTH FLOW phone received phone=%s", mask_phone(auth_flow.phone))
@@ -2082,11 +2087,18 @@ async def main() -> None:
                         mask_phone(auth_flow.phone),
                         int(max(0, time.time() - auth_flow.code_sent_at)),
                     )
-                    await auth_flow.temp_client.sign_in(
-                        phone=auth_flow.phone,
-                        code=code,
-                        phone_code_hash=auth_flow.phone_code_hash,
-                    )
+                    try:
+                        await auth_flow.temp_client.sign_in(
+                            phone=auth_flow.phone,
+                            code=code,
+                            phone_code_hash=auth_flow.phone_code_hash,
+                        )
+                    except PhoneCodeExpiredError:
+                        # После миграции DC hash может стать несогласованным у части запросов.
+                        # Делаем fallback sign_in без явного hash, чтобы клиент использовал
+                        # последнее внутреннее состояние send_code_request.
+                        logger.warning("AUTH FLOW sign-in with hash failed as expired; retrying without explicit hash")
+                        await auth_flow.temp_client.sign_in(phone=auth_flow.phone, code=code)
                     if await auth_flow.temp_client.is_user_authorized():
                         logger.info("AUTH FLOW authorized after code phone=%s", mask_phone(auth_flow.phone))
                         await system.replace_user_client(auth_flow.temp_client)
@@ -2117,11 +2129,18 @@ async def main() -> None:
                     e,
                 )
                 try:
+                    try:
+                        await auth_flow.temp_client.disconnect()
+                    except Exception:
+                        logger.exception("AUTH FLOW failed to disconnect temp client before code resend")
+                    auth_flow.temp_client = TelegramClient(auth_flow.session_name, API_ID, API_HASH, proxy=proxy)
+                    await auth_flow.temp_client.connect()
                     sent = await auth_flow.temp_client.send_code_request(auth_flow.phone)
                     auth_flow.phone_code_hash = sent.phone_code_hash
                     auth_flow.code_sent_at = time.time()
                     auth_flow.code_attempts = 0
                     auth_flow.waiting_for = "code"
+                    logger.info("AUTH FLOW replacement code requested phone=%s", mask_phone(auth_flow.phone))
                     await event.respond(
                         "⚠️ Срок действия кода истёк. Отправил новый код.\n"
                         "Введите новый код из Telegram."
