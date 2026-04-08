@@ -59,10 +59,10 @@ ITER_MESSAGES_WAIT_TIME = 2.0
 
 proxy = {
     "proxy_type": "http",
-    "addr": "91.216.186.163",
+    "addr": "168.81.251.196",
     "port": 8000,
-    "username": "EbhbW9",
-    "password": "mp3Ub2",
+    "username": "x9T42a",
+    "password": "5YSq6V",
 }
 
 CALLBACK_PARSE = b"parse_yes:"
@@ -2030,7 +2030,8 @@ async def main() -> None:
     async def on_payload(event):
         if event.sender_id != ADMIN_ID:
             return
-        text = (event.raw_text or "").strip()
+        raw_text = event.raw_text or ""
+        text = raw_text.strip()
         if auth_flow.active and auth_flow.waiting_for:
             if text.startswith("/"):
                 if text == "/start":
@@ -2055,7 +2056,10 @@ async def main() -> None:
                     )
                     return
                 if auth_flow.waiting_for == "code":
-                    code = text.replace(" ", "")
+                    code = "".join(ch for ch in text if ch.isdigit())
+                    if not code:
+                        await event.respond("⚠️ Код должен содержать цифры. Попробуйте ещё раз.")
+                        return
                     await auth_flow.temp_client.sign_in(
                         phone=auth_flow.phone,
                         code=code,
@@ -2068,7 +2072,7 @@ async def main() -> None:
                         await send_main_menu(event, "✅ Telegram-сессия успешно добавлена и активирована.")
                         return
                 if auth_flow.waiting_for == "password":
-                    await auth_flow.temp_client.sign_in(password=text)
+                    await auth_flow.temp_client.sign_in(password=raw_text)
                     if await auth_flow.temp_client.is_user_authorized():
                         await system.replace_user_client(auth_flow.temp_client)
                         auth_flow.temp_client = None
