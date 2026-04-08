@@ -205,12 +205,16 @@ class AuthFlowState:
     phone_code_hash: str = ""
     session_name: str = MANAGED_USER_SESSION
     temp_client: Optional[TelegramClient] = None
+    code_sent_at: float = 0.0
+    code_attempts: int = 0
 
     async def reset(self) -> None:
         self.active = False
         self.waiting_for = None
         self.phone = ""
         self.phone_code_hash = ""
+        self.code_sent_at = 0.0
+        self.code_attempts = 0
         if self.temp_client:
             try:
                 await self.temp_client.disconnect()
@@ -1892,6 +1896,12 @@ async def main() -> None:
     system = TelegramParserSystem(user_client=user_client, bot_client=bot_client)
     auth_flow = AuthFlowState()
 
+    def mask_phone(phone: str) -> str:
+        cleaned = re.sub(r"\D", "", phone or "")
+        if len(cleaned) <= 4:
+            return "***"
+        return f"+***{cleaned[-4:]}"
+
     def main_reply_keyboard():
         return [
             [Button.text("🚀 Старт", resize=True), Button.text("⛔ Стоп", resize=True)],
@@ -2003,6 +2013,7 @@ async def main() -> None:
         await auth_flow.reset()
         auth_flow.active = True
         auth_flow.waiting_for = "phone"
+        logger.info("AUTH FLOW started by admin_id=%s", event.sender_id)
         await event.respond(
             "📲 Добавление Telegram-сессии.\n"
             "Отправьте номер телефона в международном формате, например: +12345678900"
@@ -2046,9 +2057,13 @@ async def main() -> None:
                     auth_flow.phone = text
                     auth_flow.temp_client = TelegramClient(auth_flow.session_name, API_ID, API_HASH, proxy=proxy)
                     await auth_flow.temp_client.connect()
+                    logger.info("AUTH FLOW phone received phone=%s", mask_phone(auth_flow.phone))
                     sent = await auth_flow.temp_client.send_code_request(auth_flow.phone)
                     auth_flow.phone_code_hash = sent.phone_code_hash
+                    auth_flow.code_sent_at = time.time()
+                    auth_flow.code_attempts = 0
                     auth_flow.waiting_for = "code"
+                    logger.info("AUTH FLOW code requested phone=%s", mask_phone(auth_flow.phone))
                     await event.respond(
                         "✅ Код отправлен в Telegram.\n"
                         "Введите код (только цифры, без пробелов).\n"
@@ -2060,20 +2075,30 @@ async def main() -> None:
                     if not code:
                         await event.respond("⚠️ Код должен содержать цифры. Попробуйте ещё раз.")
                         return
+                    auth_flow.code_attempts += 1
+                    logger.info(
+                        "AUTH FLOW sign-in attempt=%s phone=%s code_age=%ss",
+                        auth_flow.code_attempts,
+                        mask_phone(auth_flow.phone),
+                        int(max(0, time.time() - auth_flow.code_sent_at)),
+                    )
                     await auth_flow.temp_client.sign_in(
                         phone=auth_flow.phone,
                         code=code,
                         phone_code_hash=auth_flow.phone_code_hash,
                     )
                     if await auth_flow.temp_client.is_user_authorized():
+                        logger.info("AUTH FLOW authorized after code phone=%s", mask_phone(auth_flow.phone))
                         await system.replace_user_client(auth_flow.temp_client)
                         auth_flow.temp_client = None
                         await auth_flow.reset()
                         await send_main_menu(event, "✅ Telegram-сессия успешно добавлена и активирована.")
                         return
                 if auth_flow.waiting_for == "password":
+                    logger.info("AUTH FLOW password received phone=%s", mask_phone(auth_flow.phone))
                     await auth_flow.temp_client.sign_in(password=raw_text)
                     if await auth_flow.temp_client.is_user_authorized():
+                        logger.info("AUTH FLOW authorized with 2FA phone=%s", mask_phone(auth_flow.phone))
                         await system.replace_user_client(auth_flow.temp_client)
                         auth_flow.temp_client = None
                         await auth_flow.reset()
@@ -2081,12 +2106,44 @@ async def main() -> None:
                         return
             except SessionPasswordNeededError:
                 auth_flow.waiting_for = "password"
+                logger.info("AUTH FLOW 2FA required phone=%s", mask_phone(auth_flow.phone))
                 await event.respond("🔐 У аккаунта включён 2FA. Введите пароль облака Telegram.")
                 return
-            except (PhoneNumberInvalidError, PhoneCodeInvalidError, PhoneCodeExpiredError, PasswordHashInvalidError) as e:
-                logger.warning("Auth flow validation error: %s", e)
-                await event.respond(f"❌ Ошибка авторизации: {type(e).__name__}. Попробуйте /addsess заново.")
+            except PhoneCodeExpiredError as e:
+                logger.warning(
+                    "AUTH FLOW code expired phone=%s code_age=%ss error=%s",
+                    mask_phone(auth_flow.phone),
+                    int(max(0, time.time() - auth_flow.code_sent_at)),
+                    e,
+                )
+                try:
+                    sent = await auth_flow.temp_client.send_code_request(auth_flow.phone)
+                    auth_flow.phone_code_hash = sent.phone_code_hash
+                    auth_flow.code_sent_at = time.time()
+                    auth_flow.code_attempts = 0
+                    auth_flow.waiting_for = "code"
+                    await event.respond(
+                        "⚠️ Срок действия кода истёк. Отправил новый код.\n"
+                        "Введите новый код из Telegram."
+                    )
+                    return
+                except Exception as resend_error:
+                    logger.exception("AUTH FLOW failed to resend code: %s", resend_error)
+                    await event.respond("❌ Код истёк и не удалось запросить новый. Повторите /addsess.")
+                    await auth_flow.reset()
+                    return
+            except PhoneCodeInvalidError as e:
+                logger.warning("AUTH FLOW invalid code phone=%s attempt=%s error=%s", mask_phone(auth_flow.phone), auth_flow.code_attempts, e)
+                await event.respond("❌ Неверный код. Проверьте код и отправьте ещё раз.")
+                return
+            except PhoneNumberInvalidError as e:
+                logger.warning("AUTH FLOW invalid phone error=%s", e)
+                await event.respond("❌ Неверный номер телефона. Повторите /addsess и введите номер в международном формате.")
                 await auth_flow.reset()
+                return
+            except PasswordHashInvalidError as e:
+                logger.warning("Auth flow validation error: %s", e)
+                await event.respond("❌ Неверный облачный пароль. Попробуйте ввести пароль ещё раз.")
                 return
             except Exception as e:
                 logger.exception("Auth flow failed: %s", e)
