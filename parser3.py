@@ -1884,7 +1884,9 @@ async def main() -> None:
     user_client = TelegramClient(USER_SESSION, API_ID, API_HASH, proxy=proxy)
     bot_client = TelegramClient(BOT_SESSION, API_ID, API_HASH, proxy=proxy)
 
-    await user_client.start()
+    # Важно: не используем start() для user_client, чтобы не получать интерактивный
+    # запрос телефона в консоли при отсутствии сессии.
+    await user_client.connect()
     await bot_client.start(bot_token=BOT_TOKEN)
 
     system = TelegramParserSystem(user_client=user_client, bot_client=bot_client)
@@ -1921,6 +1923,8 @@ async def main() -> None:
             "/deletesess — удалить текущую Telegram-сессию\n"
             "/logs — выгрузить логи в txt"
         )
+        if not await system.user_client.is_user_authorized():
+            await event.respond("⚠️ User-сессия не авторизована. Выполните /addsess.")
 
     @bot_client.on(events.NewMessage(pattern=r"📊 Прогресс"))
     async def on_progress(event):
