@@ -15,6 +15,7 @@ from telethon.errors import (
     FloodWaitError,
     InviteHashExpiredError,
     PasswordHashInvalidError,
+    PhoneMigrateError,
     PhoneCodeExpiredError,
     PhoneCodeInvalidError,
     PhoneNumberInvalidError,
@@ -1902,6 +1903,17 @@ async def main() -> None:
             return "***"
         return f"+***{cleaned[-4:]}"
 
+    async def send_code_with_migration_handling(client: TelegramClient, phone: str):
+        try:
+            return await client.send_code_request(phone)
+        except PhoneMigrateError as e:
+            target_dc = int(getattr(e, "new_dc", 0) or 0)
+            logger.warning("AUTH FLOW phone migrated: switching client to dc=%s", target_dc)
+            if target_dc <= 0:
+                raise
+            await client._switch_dc(target_dc)
+            return await client.send_code_request(phone)
+
     def main_reply_keyboard():
         return [
             [Button.text("🚀 Старт", resize=True), Button.text("⛔ Стоп", resize=True)],
@@ -2063,7 +2075,7 @@ async def main() -> None:
                     auth_flow.temp_client = TelegramClient(auth_flow.session_name, API_ID, API_HASH, proxy=proxy)
                     await auth_flow.temp_client.connect()
                     logger.info("AUTH FLOW phone received phone=%s", mask_phone(auth_flow.phone))
-                    sent = await auth_flow.temp_client.send_code_request(auth_flow.phone)
+                    sent = await send_code_with_migration_handling(auth_flow.temp_client, auth_flow.phone)
                     auth_flow.phone_code_hash = sent.phone_code_hash
                     auth_flow.code_sent_at = time.time()
                     auth_flow.code_attempts = 0
@@ -2135,7 +2147,7 @@ async def main() -> None:
                         logger.exception("AUTH FLOW failed to disconnect temp client before code resend")
                     auth_flow.temp_client = TelegramClient(auth_flow.session_name, API_ID, API_HASH, proxy=proxy)
                     await auth_flow.temp_client.connect()
-                    sent = await auth_flow.temp_client.send_code_request(auth_flow.phone)
+                    sent = await send_code_with_migration_handling(auth_flow.temp_client, auth_flow.phone)
                     auth_flow.phone_code_hash = sent.phone_code_hash
                     auth_flow.code_sent_at = time.time()
                     auth_flow.code_attempts = 0
