@@ -14,6 +14,12 @@ from telethon.errors import (
     ChannelPrivateError,
     FloodWaitError,
     InviteHashExpiredError,
+    PasswordHashInvalidError,
+    PhoneMigrateError,
+    PhoneCodeExpiredError,
+    PhoneCodeInvalidError,
+    PhoneNumberInvalidError,
+    SessionPasswordNeededError,
     UsernameInvalidError,
     UsernameNotOccupiedError,
 )
@@ -54,10 +60,10 @@ ITER_MESSAGES_WAIT_TIME = 2.0
 
 proxy = {
     "proxy_type": "http",
-    "addr": "91.216.186.163",
+    "addr": "168.81.251.196",
     "port": 8000,
-    "username": "EbhbW9",
-    "password": "mp3Ub2",
+    "username": "x9T42a",
+    "password": "5YSq6V",
 }
 
 CALLBACK_PARSE = b"parse_yes:"
@@ -68,6 +74,8 @@ CALLBACK_STAGE2_NO = b"stage2_no"
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
 PENDING_APPROVAL_FILE = "pending_approval.json"
 APPROVED_QUEUE_FILE = "approved_queue.json"
+LOG_FILE = os.getenv("LOG_FILE", "parser3.log")
+MANAGED_USER_SESSION = os.getenv("TG_MANAGED_USER_SESSION", "user_parser_managed")
 
 
 # =========================
@@ -78,6 +86,14 @@ logging.basicConfig(
     format="%(asctime)s | %(levelname)s | %(message)s",
 )
 logger = logging.getLogger("telegram_parser")
+if not any(
+    isinstance(handler, logging.FileHandler) and getattr(handler, "baseFilename", "").endswith(LOG_FILE)
+    for handler in logger.handlers
+):
+    file_handler = logging.FileHandler(LOG_FILE, encoding="utf-8")
+    file_handler.setLevel(LOG_LEVEL)
+    file_handler.setFormatter(logging.Formatter("%(asctime)s | %(levelname)s | %(message)s"))
+    logger.addHandler(file_handler)
 
 
 # =========================
@@ -182,6 +198,32 @@ class SessionState:
         self.last_subs_ts = 0.0
 
 
+@dataclass
+class AuthFlowState:
+    active: bool = False
+    waiting_for: Optional[str] = None
+    phone: str = ""
+    phone_code_hash: str = ""
+    session_name: str = MANAGED_USER_SESSION
+    temp_client: Optional[TelegramClient] = None
+    code_sent_at: float = 0.0
+    code_attempts: int = 0
+
+    async def reset(self) -> None:
+        self.active = False
+        self.waiting_for = None
+        self.phone = ""
+        self.phone_code_hash = ""
+        self.code_sent_at = 0.0
+        self.code_attempts = 0
+        if self.temp_client:
+            try:
+                await self.temp_client.disconnect()
+            except Exception:
+                logger.exception("Failed to disconnect temp auth client")
+        self.temp_client = None
+
+
 class RateLimiter:
     def __init__(self):
         self.intervals = {
@@ -250,6 +292,14 @@ class TelegramParserSystem:
         self.profile_retry_task: Optional[asyncio.Task] = None
         self.awaiting_stage2_confirmation = False
         self._load_stage2_state()
+
+    async def replace_user_client(self, new_client: TelegramClient) -> None:
+        old_client = self.user_client
+        self.user_client = new_client
+        try:
+            await old_client.disconnect()
+        except Exception:
+            logger.exception("Failed to disconnect old user client")
 
     def _set_global_pause(self, wait_seconds: int, context: str) -> None:
         bounded_wait = int(
@@ -1839,17 +1889,48 @@ async def main() -> None:
     user_client = TelegramClient(USER_SESSION, API_ID, API_HASH, proxy=proxy)
     bot_client = TelegramClient(BOT_SESSION, API_ID, API_HASH, proxy=proxy)
 
-    await user_client.start()
+    # Важно: не используем start() для user_client, чтобы не получать интерактивный
+    # запрос телефона в консоли при отсутствии сессии.
+    await user_client.connect()
     await bot_client.start(bot_token=BOT_TOKEN)
 
     system = TelegramParserSystem(user_client=user_client, bot_client=bot_client)
+    auth_flow = AuthFlowState()
+
+    def mask_phone(phone: str) -> str:
+        cleaned = re.sub(r"\D", "", phone or "")
+        if len(cleaned) <= 4:
+            return "***"
+        return f"+***{cleaned[-4:]}"
+
+    async def send_code_with_migration_handling(client: TelegramClient, phone: str):
+        try:
+            return await client.send_code_request(phone)
+        except PhoneMigrateError as e:
+            target_dc = int(getattr(e, "new_dc", 0) or 0)
+            logger.warning("AUTH FLOW phone migrated: switching client to dc=%s", target_dc)
+            if target_dc <= 0:
+                raise
+            await client._switch_dc(target_dc)
+            return await client.send_code_request(phone)
+
+    def main_reply_keyboard():
+        return [
+            [Button.text("🚀 Старт", resize=True), Button.text("⛔ Стоп", resize=True)],
+            [Button.text("📊 Прогресс", resize=True), Button.text("/logs", resize=True)],
+            [Button.text("/addsess", resize=True), Button.text("/deletesess", resize=True)],
+        ]
+
+    async def send_main_menu(event, text: str) -> None:
+        await event.respond(text, buttons=main_reply_keyboard())
 
     @bot_client.on(events.NewMessage(pattern=r"/start"))
     async def on_start(event):
         if event.sender_id != ADMIN_ID:
             return
         system.state.owner_user_id = event.sender_id
-        await event.respond(
+        await send_main_menu(
+            event,
             "🤖 Telegram Parser готов.\n"
             "Отправьте данные:\n"
             "channel_limit=1000\n"
@@ -1859,8 +1940,13 @@ async def main() -> None:
             "Команды:\n"
             "🚀 Старт\n"
             "⛔ Стоп\n"
-            "📊 Прогресс"
+            "📊 Прогресс\n"
+            "/addsess — добавить/сменить Telegram-сессию\n"
+            "/deletesess — удалить текущую Telegram-сессию\n"
+            "/logs — выгрузить логи в txt"
         )
+        if not await system.user_client.is_user_authorized():
+            await event.respond("⚠️ User-сессия не авторизована. Выполните /addsess.")
 
     @bot_client.on(events.NewMessage(pattern=r"📊 Прогресс"))
     async def on_progress(event):
@@ -1874,9 +1960,83 @@ async def main() -> None:
             return
         await system.stop(event.chat_id)
 
+    @bot_client.on(events.NewMessage(pattern=r"/logs"))
+    async def on_logs(event):
+        if event.sender_id != ADMIN_ID:
+            return
+        if not os.path.exists(LOG_FILE):
+            await event.respond("⚠️ Лог-файл пока не создан.")
+            return
+        try:
+            await bot_client.send_file(event.chat_id, LOG_FILE, caption="📄 Логи парсера")
+        except Exception as e:
+            logger.exception("Failed to send logs file: %s", e)
+            await event.respond(f"❌ Не удалось отправить логи: {e}")
+
+    @bot_client.on(events.NewMessage(pattern=r"/deletesess"))
+    async def on_delete_session(event):
+        if event.sender_id != ADMIN_ID:
+            return
+        if system.state.running:
+            await event.respond("⚠️ Сначала остановите парсер, затем удаляйте сессию.")
+            return
+        old_client = system.user_client
+        try:
+            await old_client.log_out()
+        except Exception:
+            logger.exception("Failed to logout current user session")
+        try:
+            await old_client.disconnect()
+        except Exception:
+            logger.exception("Failed to disconnect current user session")
+
+        session_name = getattr(old_client.session, "filename", None) or USER_SESSION
+        if str(session_name).endswith(".session"):
+            session_file = str(session_name)
+        else:
+            session_file = f"{session_name}.session"
+        session_journal_file = f"{session_file}-journal"
+        removed_files = []
+        for path in [session_file, session_journal_file]:
+            try:
+                if path and os.path.exists(path):
+                    os.remove(path)
+                    removed_files.append(path)
+            except Exception:
+                logger.exception("Failed to delete session file: %s", path)
+
+        fallback_client = TelegramClient(USER_SESSION, API_ID, API_HASH, proxy=proxy)
+        await fallback_client.connect()
+        system.user_client = fallback_client
+        await send_main_menu(
+            event,
+            "🗑 Сессия Telegram-аккаунта удалена.\n"
+            f"Удалены файлы: {', '.join(removed_files) if removed_files else 'файлы не найдены'}\n"
+            "Добавьте новую через /addsess."
+        )
+
+    @bot_client.on(events.NewMessage(pattern=r"/addsess"))
+    async def on_add_session(event):
+        if event.sender_id != ADMIN_ID:
+            return
+        if system.state.running:
+            await event.respond("⚠️ Сначала остановите парсер, затем меняйте сессию.")
+            return
+        await auth_flow.reset()
+        auth_flow.active = True
+        auth_flow.waiting_for = "phone"
+        logger.info("AUTH FLOW started by admin_id=%s", event.sender_id)
+        await event.respond(
+            "📲 Добавление Telegram-сессии.\n"
+            "Отправьте номер телефона в международном формате, например: +12345678900"
+        )
+
     @bot_client.on(events.NewMessage(pattern=r"🚀 Старт"))
     async def on_run(event):
         if event.sender_id != ADMIN_ID:
+            return
+        if not await system.user_client.is_user_authorized():
+            await event.respond("⚠️ Сессия пользователя Telegram не авторизована. Используйте /addsess.")
             return
         if system.state.running:
             await event.respond("⚠️ Уже запущено.")
@@ -1893,7 +2053,135 @@ async def main() -> None:
     async def on_payload(event):
         if event.sender_id != ADMIN_ID:
             return
-        text = (event.raw_text or "").strip()
+        raw_text = event.raw_text or ""
+        text = raw_text.strip()
+        if auth_flow.active and auth_flow.waiting_for:
+            if text.startswith("/"):
+                if text == "/start":
+                    await auth_flow.reset()
+                    await send_main_menu(event, "ℹ️ Добавление сессии отменено.")
+                return
+            if not text:
+                await event.respond("⚠️ Пустое сообщение. Повторите ввод.")
+                return
+            try:
+                if auth_flow.waiting_for == "phone":
+                    auth_flow.phone = text
+                    if auth_flow.temp_client:
+                        try:
+                            await auth_flow.temp_client.disconnect()
+                        except Exception:
+                            logger.exception("AUTH FLOW failed to disconnect stale temp client before phone step")
+                    auth_flow.temp_client = TelegramClient(auth_flow.session_name, API_ID, API_HASH, proxy=proxy)
+                    await auth_flow.temp_client.connect()
+                    logger.info("AUTH FLOW phone received phone=%s", mask_phone(auth_flow.phone))
+                    sent = await send_code_with_migration_handling(auth_flow.temp_client, auth_flow.phone)
+                    auth_flow.phone_code_hash = sent.phone_code_hash
+                    auth_flow.code_sent_at = time.time()
+                    auth_flow.code_attempts = 0
+                    auth_flow.waiting_for = "code"
+                    logger.info("AUTH FLOW code requested phone=%s", mask_phone(auth_flow.phone))
+                    await event.respond(
+                        "✅ Код отправлен в Telegram.\n"
+                        "Введите код (только цифры, без пробелов).\n"
+                        "Если передумали, отправьте /start."
+                    )
+                    return
+                if auth_flow.waiting_for == "code":
+                    code = "".join(ch for ch in text if ch.isdigit())
+                    if not code:
+                        await event.respond("⚠️ Код должен содержать цифры. Попробуйте ещё раз.")
+                        return
+                    auth_flow.code_attempts += 1
+                    logger.info(
+                        "AUTH FLOW sign-in attempt=%s phone=%s code_age=%ss",
+                        auth_flow.code_attempts,
+                        mask_phone(auth_flow.phone),
+                        int(max(0, time.time() - auth_flow.code_sent_at)),
+                    )
+                    try:
+                        await auth_flow.temp_client.sign_in(
+                            phone=auth_flow.phone,
+                            code=code,
+                            phone_code_hash=auth_flow.phone_code_hash,
+                        )
+                    except PhoneCodeExpiredError:
+                        # После миграции DC hash может стать несогласованным у части запросов.
+                        # Делаем fallback sign_in без явного hash, чтобы клиент использовал
+                        # последнее внутреннее состояние send_code_request.
+                        logger.warning("AUTH FLOW sign-in with hash failed as expired; retrying without explicit hash")
+                        await auth_flow.temp_client.sign_in(phone=auth_flow.phone, code=code)
+                    if await auth_flow.temp_client.is_user_authorized():
+                        logger.info("AUTH FLOW authorized after code phone=%s", mask_phone(auth_flow.phone))
+                        await system.replace_user_client(auth_flow.temp_client)
+                        auth_flow.temp_client = None
+                        await auth_flow.reset()
+                        await send_main_menu(event, "✅ Telegram-сессия успешно добавлена и активирована.")
+                        return
+                if auth_flow.waiting_for == "password":
+                    logger.info("AUTH FLOW password received phone=%s", mask_phone(auth_flow.phone))
+                    await auth_flow.temp_client.sign_in(password=raw_text)
+                    if await auth_flow.temp_client.is_user_authorized():
+                        logger.info("AUTH FLOW authorized with 2FA phone=%s", mask_phone(auth_flow.phone))
+                        await system.replace_user_client(auth_flow.temp_client)
+                        auth_flow.temp_client = None
+                        await auth_flow.reset()
+                        await send_main_menu(event, "✅ Telegram-сессия (с 2FA) успешно добавлена и активирована.")
+                        return
+            except SessionPasswordNeededError:
+                auth_flow.waiting_for = "password"
+                logger.info("AUTH FLOW 2FA required phone=%s", mask_phone(auth_flow.phone))
+                await event.respond("🔐 У аккаунта включён 2FA. Введите пароль облака Telegram.")
+                return
+            except PhoneCodeExpiredError as e:
+                logger.warning(
+                    "AUTH FLOW code expired phone=%s code_age=%ss error=%s",
+                    mask_phone(auth_flow.phone),
+                    int(max(0, time.time() - auth_flow.code_sent_at)),
+                    e,
+                )
+                try:
+                    try:
+                        await auth_flow.temp_client.disconnect()
+                    except Exception:
+                        logger.exception("AUTH FLOW failed to disconnect temp client before code resend")
+                    auth_flow.temp_client = TelegramClient(auth_flow.session_name, API_ID, API_HASH, proxy=proxy)
+                    await auth_flow.temp_client.connect()
+                    sent = await send_code_with_migration_handling(auth_flow.temp_client, auth_flow.phone)
+                    auth_flow.phone_code_hash = sent.phone_code_hash
+                    auth_flow.code_sent_at = time.time()
+                    auth_flow.code_attempts = 0
+                    auth_flow.waiting_for = "code"
+                    logger.info("AUTH FLOW replacement code requested phone=%s", mask_phone(auth_flow.phone))
+                    await event.respond(
+                        "⚠️ Срок действия кода истёк. Отправил новый код.\n"
+                        "Введите новый код из Telegram."
+                    )
+                    return
+                except Exception as resend_error:
+                    logger.exception("AUTH FLOW failed to resend code: %s", resend_error)
+                    await event.respond("❌ Код истёк и не удалось запросить новый. Повторите /addsess.")
+                    await auth_flow.reset()
+                    return
+            except PhoneCodeInvalidError as e:
+                logger.warning("AUTH FLOW invalid code phone=%s attempt=%s error=%s", mask_phone(auth_flow.phone), auth_flow.code_attempts, e)
+                await event.respond("❌ Неверный код. Проверьте код и отправьте ещё раз.")
+                return
+            except PhoneNumberInvalidError as e:
+                logger.warning("AUTH FLOW invalid phone error=%s", e)
+                await event.respond("❌ Неверный номер телефона. Повторите /addsess и введите номер в международном формате.")
+                await auth_flow.reset()
+                return
+            except PasswordHashInvalidError as e:
+                logger.warning("Auth flow validation error: %s", e)
+                await event.respond("❌ Неверный облачный пароль. Попробуйте ввести пароль ещё раз.")
+                return
+            except Exception as e:
+                logger.exception("Auth flow failed: %s", e)
+                await event.respond(f"❌ Не удалось завершить авторизацию: {e}\nПовторите через /addsess.")
+                await auth_flow.reset()
+                return
+
         if text.startswith("/") or text in {"🚀 Старт", "⛔ Стоп", "📊 Прогресс"}:
             return
         lowered = text.lower()
