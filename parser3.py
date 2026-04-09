@@ -11,6 +11,7 @@ from typing import Deque, Dict, List, Optional, Set, Tuple
 
 from telethon import Button, TelegramClient, events
 from telethon.errors import (
+    AuthRestartError,
     ChannelPrivateError,
     FloodWaitError,
     InviteHashExpiredError,
@@ -1904,15 +1905,41 @@ async def main() -> None:
         return f"+***{cleaned[-4:]}"
 
     async def send_code_with_migration_handling(client: TelegramClient, phone: str):
-        try:
-            return await client.send_code_request(phone)
-        except PhoneMigrateError as e:
-            target_dc = int(getattr(e, "new_dc", 0) or 0)
-            logger.warning("AUTH FLOW phone migrated: switching client to dc=%s", target_dc)
-            if target_dc <= 0:
-                raise
-            await client._switch_dc(target_dc)
-            return await client.send_code_request(phone)
+        last_error: Optional[Exception] = None
+        for attempt in range(1, 4):
+            try:
+                if not client.is_connected():
+                    logger.warning("AUTH FLOW temp client disconnected before send_code; reconnecting (attempt=%s)", attempt)
+                    await client.connect()
+                return await client.send_code_request(phone)
+            except PhoneMigrateError as e:
+                target_dc = int(getattr(e, "new_dc", 0) or 0)
+                logger.warning("AUTH FLOW phone migrated: switching client to dc=%s (attempt=%s)", target_dc, attempt)
+                if target_dc <= 0:
+                    last_error = e
+                    continue
+                await client._switch_dc(target_dc)
+                last_error = e
+                continue
+            except AuthRestartError as e:
+                logger.warning("AUTH FLOW auth restart requested by Telegram (attempt=%s)", attempt)
+                last_error = e
+                try:
+                    await client.disconnect()
+                except Exception:
+                    logger.exception("AUTH FLOW failed to disconnect temp client on AuthRestartError")
+                await asyncio.sleep(0.6)
+                await client.connect()
+                continue
+            except ConnectionError as e:
+                logger.warning("AUTH FLOW connection error during send_code (attempt=%s): %s", attempt, e)
+                last_error = e
+                await asyncio.sleep(0.6)
+                await client.connect()
+                continue
+        if last_error:
+            raise last_error
+        raise RuntimeError("AUTH FLOW failed to request code for unknown reason")
 
     def main_reply_keyboard():
         return [
